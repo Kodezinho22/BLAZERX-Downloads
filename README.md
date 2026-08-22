@@ -4,7 +4,7 @@ Aplicativo desktop para salas, chat e transmissão entre amigos.
 
 ## Baixar para Windows
 
-**Versão atual: v1.8.2**
+**Versão atual: v1.8.3**
 
 Baixe sempre a versão mais recente pela página de Releases:
 
