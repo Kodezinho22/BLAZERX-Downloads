@@ -1,21 +1,21 @@
-# BLAZERX
+# ESTUDEX
 
-Aplicativo desktop para salas, chat e transmissao entre amigos.
+Aplicativo desktop para salas, chat e transmissão entre amigos.
 
 ## Baixar para Windows
 
-**Versao atual: v0.9.19**
+**Versão atual: v1.8.2**
 
-Baixe sempre a versao mais recente pela pagina de Releases:
+Baixe sempre a versão mais recente pela página de Releases:
 
 https://github.com/Kodezinho22/BLAZERX-Downloads/releases/latest
 
 Arquivo oficial para Windows:
 
-`BLAZERX-Setup.exe`
+`ESTUDEX-Setup.exe`
 
-Depois de baixar, execute o instalador normalmente. O BLAZERX cria o atalho na Area de Trabalho e no Menu Iniciar.
+O instalador compatível `BLAZERX-Setup.exe` também pode ser disponibilizado pela mesma release. Depois de baixar, execute o instalador normalmente; o ESTUDEX cria o atalho na Área de Trabalho e no Menu Iniciar.
 
-## Sobre este repositorio
+## Sobre este repositório
 
-Este repositorio e publico apenas para distribuicao do BLAZERX. O codigo-fonte principal do aplicativo permanece privado.
+Este repositório é público apenas para distribuição do ESTUDEX. O código-fonte principal do aplicativo permanece privado.
