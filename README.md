@@ -4,7 +4,7 @@ Aplicativo desktop para salas, chat e transmissão entre amigos.
 
 ## Baixar para Windows
 
-**Versão atual: v1.9.3 — Radmin Connection Hotfix 1**
+**Versão atual: v1.9.3 — Hotfix 2**
 
 Baixe sempre a versão mais recente pela página de Releases:
 
@@ -28,7 +28,7 @@ Depois de baixar, execute o instalador normalmente; o ESTUDEX cria o atalho na �
 - hotbar da transmissão ajustada e botão inativo removido;
 - identidade visual e ícone oficial do ESTUDEX preservados.
 
-## Radmin Connection Hotfix 1
+## Hotfix 1 — Radmin Connection
 
 - mantém o heartbeat social ativo para evitar amigos aparecendo offline indevidamente;
 - recupera endpoints/IPs Radmin antigos herdados após atualização;
@@ -36,11 +36,21 @@ Depois de baixar, execute o instalador normalmente; o ESTUDEX cria o atalho na �
 - corrige convites de sala que ainda usavam endereço antigo do amigo;
 - repara o estado legado do firewall/Radmin quando autorizado pelo usuário.
 
+## Hotfix 2
+
+- perfil persistido entra direto no ESTUDEX sem recriação a cada abertura;
+- remove textos antigos de “perfil de teste”;
+- conecta o botão Convidar ao fluxo real de amigos e convites de sala;
+- adiciona recebimento de convite com Entrar / Recusar;
+- encerra salas em uma única operação e bloqueia races/cliques duplicados;
+- evita salas fantasmas ou duplicadas após encerramento;
+- mantém todas as correções de Radmin e presença do Hotfix 1.
+
 ## Integridade
 
 SHA-256 do `ESTUDEX-Setup.exe` e do `BLAZERX-Setup.exe`:
 
-`d3b8cc22ad50d7915b3f0912620a0ffe7ad0fa8d143019be21f377d7ef83fde4`
+`39ba06169de5edfabe1afe2c6be81fc36d4248e9a081627c23b893e9fc5560ab`
 
 ## Sobre este repositório
 
