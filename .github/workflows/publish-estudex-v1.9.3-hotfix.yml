@@ -1,0 +1,68 @@
+name: Publish ESTUDEX v1.9.3 Radmin Hotfix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/publish-estudex-v1.9.3-hotfix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ARTIFACT_URL: "https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-8680-820e-ba49-9c0db5e91510/raw?se=2026-08-29T06%3A47%3A18Z&sp=r&sv=2026-02-06&sr=b&scid=6c048340-11f9-5623-a762-03cd448830a5&skoid=db6dad9e-03ee-465b-aef6-ce0f63a161dc&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-08-28T20%3A43%3A28Z&ske=2026-08-29T20%3A43%3A28Z&sks=b&skv=2026-02-06&sig=gCdrZr6OlTJ6Z77wnglpQ2AQ229HPrS9pdJf9vbkhF0%3D"
+      ARTIFACT_SHA256: f8b8ae1b55c941e912a713dcb0064a84ffb68d1ea06535ae91eb43e664f1e38b
+      SETUP_SHA256: d3b8cc22ad50d7915b3f0912620a0ffe7ad0fa8d143019be21f377d7ef83fde4
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download and verify Radmin hotfix
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-delay 2 "$ARTIFACT_URL" -o artifact.zip
+          echo "$ARTIFACT_SHA256  artifact.zip" | sha256sum -c -
+          mkdir artifact
+          unzip -q artifact.zip -d artifact
+          setup="$(find artifact -type f -name 'ESTUDEX-Setup.exe' -print -quit)"
+          test -n "$setup"
+          echo "$SETUP_SHA256  $setup" | sha256sum -c -
+          cp "$setup" ESTUDEX-Setup.exe
+          cp "$setup" BLAZERX-Setup.exe
+
+      - name: Publish GitHub Release v1.9.3-hotfix.1
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          notes=$(cat <<'EOF'
+          ESTUDEX v1.9.3 — Radmin Connection Hotfix 1
+
+          Hotfix de conectividade para instalações atualizadas a partir de versões antigas.
+
+          Corrige:
+          - presença social/Radmin que podia expirar e deixar amigos offline;
+          - endpoints antigos de amigos após atualização;
+          - descoberta e entrada em salas pela mesma rede Radmin;
+          - convite para sala usando endereço antigo do amigo;
+          - reparo de estado legado do firewall/Radmin quando autorizado pelo usuário.
+
+          A interface V10.10 e o conjunto funcional da v1.9.3 permanecem preservados.
+
+          SHA-256 do instalador:
+          d3b8cc22ad50d7915b3f0912620a0ffe7ad0fa8d143019be21f377d7ef83fde4
+          EOF
+          )
+          if gh release view v1.9.3-hotfix.1 >/dev/null 2>&1; then
+            gh release upload v1.9.3-hotfix.1 ESTUDEX-Setup.exe BLAZERX-Setup.exe --clobber
+            gh release edit v1.9.3-hotfix.1 --title "ESTUDEX v1.9.3 — Radmin Connection Hotfix 1" --notes "$notes" --latest
+          else
+            gh release create v1.9.3-hotfix.1 ESTUDEX-Setup.exe BLAZERX-Setup.exe --target main --title "ESTUDEX v1.9.3 — Radmin Connection Hotfix 1" --notes "$notes" --latest
+          fi
