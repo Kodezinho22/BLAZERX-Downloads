@@ -4,7 +4,7 @@ Aplicativo desktop para salas, chat e transmissão entre amigos.
 
 ## Baixar para Windows
 
-**Versão atual: v1.8.4**
+**Versão atual: v1.9.3**
 
 Baixe sempre a versão mais recente pela página de Releases:
 
@@ -14,15 +14,23 @@ Arquivo oficial para Windows:
 
 `ESTUDEX-Setup.exe`
 
-O instalador compatível `BLAZERX-Setup.exe` também é disponibilizado pela mesma release. Depois de baixar, execute o instalador normalmente; o ESTUDEX cria o atalho na Área de Trabalho e no Menu Iniciar.
+Depois de baixar, execute o instalador normalmente; o ESTUDEX cria o atalho na Área de Trabalho e no Menu Iniciar.
 
-## Destaques da v1.8.4
+## Destaques da v1.9.3
 
-- updater oculto até existir uma atualização realmente pronta;
-- correção do alerta/notificação fantasma;
-- correção do travamento ao abrir Início;
-- imagem escolhida em Aparência aplicada somente ao Lobby;
-- novos layouts do Lobby, Salas e sala de transmissão.
+- interface V10.10 preservada com os motores ESTUDEX integrados;
+- tema personalizado aplicado de forma consistente na interface;
+- perfil, status e contador de amigos estabilizados;
+- chat de sala com mídia estabilizada;
+- chamadas diretas por DM e integração Radmin;
+- hotbar da transmissão ajustada e botão inativo removido;
+- identidade visual e ícone oficial do ESTUDEX preservados.
+
+## Integridade
+
+SHA-256 do `ESTUDEX-Setup.exe`:
+
+`333f8201e2f521401bd49fa694a1c3bf743109d6851ef727633367b93e426497`
 
 ## Sobre este repositório
 
