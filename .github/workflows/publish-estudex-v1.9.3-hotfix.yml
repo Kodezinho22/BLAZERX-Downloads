@@ -1,4 +1,4 @@
-name: Publish ESTUDEX v1.9.3 Radmin Hotfix
+name: Publish ESTUDEX v1.9.3 Hotfix 2
 
 on:
   push:
@@ -15,14 +15,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      ARTIFACT_URL: "https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-8680-820e-ba49-9c0db5e91510/raw?se=2026-08-29T06%3A47%3A18Z&sp=r&sv=2026-02-06&sr=b&scid=6c048340-11f9-5623-a762-03cd448830a5&skoid=db6dad9e-03ee-465b-aef6-ce0f63a161dc&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-08-28T20%3A43%3A28Z&ske=2026-08-29T20%3A43%3A28Z&sks=b&skv=2026-02-06&sig=gCdrZr6OlTJ6Z77wnglpQ2AQ229HPrS9pdJf9vbkhF0%3D"
-      ARTIFACT_SHA256: f8b8ae1b55c941e912a713dcb0064a84ffb68d1ea06535ae91eb43e664f1e38b
-      SETUP_SHA256: d3b8cc22ad50d7915b3f0912620a0ffe7ad0fa8d143019be21f377d7ef83fde4
+      ARTIFACT_URL: "https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-2968-820e-9004-7354b3e6bd97/raw?se=2026-08-29T07%3A55%3A45Z&sp=r&sv=2026-02-06&sr=b&scid=d2612abf-e549-5b3b-8bc7-687673c52f94&skoid=4a431cd2-eafd-49c7-90be-bbb4d45e696d&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-08-28T20%3A45%3A58Z&ske=2026-08-29T20%3A45%3A58Z&sks=b&skv=2026-02-06&sig=6r5RMzohVnSDKw4A6ex7wa1pYd%2BY9ClR7at8ddzekeg%3D"
+      ARTIFACT_SHA256: 40fea0008abe577255ea31d5e5ceabe70d34f551c63d6762021afd4be7ee3508
+      SETUP_SHA256: 39ba06169de5edfabe1afe2c6be81fc36d4248e9a081627c23b893e9fc5560ab
+      RELEASE_TAG: v1.9.5-hotfix2
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download and verify Radmin hotfix
+      - name: Download and verify Hotfix 2
         shell: bash
         run: |
           set -euo pipefail
@@ -36,33 +37,35 @@ jobs:
           cp "$setup" ESTUDEX-Setup.exe
           cp "$setup" BLAZERX-Setup.exe
 
-      - name: Publish GitHub Release v1.9.3-hotfix.1
+      - name: Publish ESTUDEX v1.9.3 Hotfix 2
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           notes=$(cat <<'EOF'
-          ESTUDEX v1.9.3 — Radmin Connection Hotfix 1
+          ESTUDEX v1.9.3 — Hotfix 2
 
-          Hotfix de conectividade para instalações atualizadas a partir de versões antigas.
+          Segundo hotfix cumulativo da v1.9.3.
 
           Corrige:
-          - presença social/Radmin que podia expirar e deixar amigos offline;
-          - endpoints antigos de amigos após atualização;
-          - descoberta e entrada em salas pela mesma rede Radmin;
-          - convite para sala usando endereço antigo do amigo;
-          - reparo de estado legado do firewall/Radmin quando autorizado pelo usuário.
+          - perfil já salvo abrindo direto no ESTUDEX, sem exigir recriação a cada inicialização;
+          - remoção dos textos antigos de “perfil de teste”;
+          - botão Convidar conectado ao fluxo real de amigos e convites de sala;
+          - convite recebido com ações Entrar / Recusar;
+          - encerramento de sala em uma única operação, com proteção contra cliques/races duplicados;
+          - salas fantasmas/duplicadas após encerramento;
+          - preserva as correções do Hotfix 1 para presença, Radmin, endpoints antigos e entrada em salas.
 
-          A interface V10.10 e o conjunto funcional da v1.9.3 permanecem preservados.
+          A V10.10 permanece como autoridade visual e os arquivos canônicos protegidos continuam preservados.
 
           SHA-256 do instalador:
-          d3b8cc22ad50d7915b3f0912620a0ffe7ad0fa8d143019be21f377d7ef83fde4
+          39ba06169de5edfabe1afe2c6be81fc36d4248e9a081627c23b893e9fc5560ab
           EOF
           )
-          if gh release view v1.9.3-hotfix.1 >/dev/null 2>&1; then
-            gh release upload v1.9.3-hotfix.1 ESTUDEX-Setup.exe BLAZERX-Setup.exe --clobber
-            gh release edit v1.9.3-hotfix.1 --title "ESTUDEX v1.9.3 — Radmin Connection Hotfix 1" --notes "$notes" --latest
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" ESTUDEX-Setup.exe BLAZERX-Setup.exe --clobber
+            gh release edit "$RELEASE_TAG" --title "ESTUDEX v1.9.3 — Hotfix 2" --notes "$notes" --latest
           else
-            gh release create v1.9.3-hotfix.1 ESTUDEX-Setup.exe BLAZERX-Setup.exe --target main --title "ESTUDEX v1.9.3 — Radmin Connection Hotfix 1" --notes "$notes" --latest
+            gh release create "$RELEASE_TAG" ESTUDEX-Setup.exe BLAZERX-Setup.exe --target main --title "ESTUDEX v1.9.3 — Hotfix 2" --notes "$notes" --latest
           fi
