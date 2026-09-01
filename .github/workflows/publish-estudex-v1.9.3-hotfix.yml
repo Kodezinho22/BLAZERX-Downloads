@@ -1,4 +1,4 @@
-name: Publish ESTUDEX v1.9.3 Hotfix 3
+name: Publish ESTUDEX v1.9.3 Hotfix 4
 
 on:
   push:
@@ -15,15 +15,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      ARTIFACT_URL: "https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-1108-820e-9443-1c61322c6856/raw?se=2026-08-29T08%3A42%3A11Z&sp=r&sv=2026-02-06&sr=b&scid=bddc7b0f-7e57-5d39-ad61-a0ea7b42c77b&skoid=4a431cd2-eafd-49c7-90be-bbb4d45e696d&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-08-28T21%3A03%3A09Z&ske=2026-08-29T21%3A03%3A09Z&sks=b&skv=2026-02-06&sig=EALRrkDAcq/pPIe6LtFoftxOVslNWq%2BsPj9TYXUSwkA%3D"
-      ARTIFACT_SHA256: 158a505329b4e0eac2cb7d0d057269d55c7d5ba54380a2d0966e30e3d2975522
-      SETUP_SHA256: 35fbe438f952880c842a6fb2352118940ef585ee8a188faf07075a1d61aaaa69
-      RELEASE_TAG: v1.9.6-hotfix3
+      ARTIFACT_URL: "https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-3024-820e-ac11-ffc5a55b56c6/raw?se=2026-09-01T10%3A23%3A30Z&sp=r&sv=2026-02-06&sr=b&scid=910c32de-e5a5-5b3b-8747-087464377943&skoid=a6356955-0ca0-4033-9150-c0c162458498&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-08-31T22%3A20%3A45Z&ske=2026-09-01T22%3A20%3A45Z&sks=b&skv=2026-02-06&sig=vch2Se1mxIc2222cV%2B/3D4MuF%2Bp6UQBEwq1w6rJKXsI%3D"
+      ARTIFACT_SHA256: adc56244652b0c2b9154e0ceed4dcf96fca7c6a8ec28b5b8bdda41a0918616b1
+      SETUP_SHA256: f9077b572acb250e1d8362eaaa9422146e85cf5e432e42e7dd4b1a8acc921a0d
+      RELEASE_TAG: v1.9.7-hotfix4
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download and verify Hotfix 3
+      - name: Download and verify Hotfix 4
         shell: bash
         run: |
           set -euo pipefail
@@ -34,46 +34,44 @@ jobs:
           setup="$(find artifact -type f -name 'ESTUDEX-Setup.exe' -print -quit)"
           test -n "$setup"
           echo "$SETUP_SHA256  $setup" | sha256sum -c -
+          test -f artifact/squirrel.windows/x64/blazerx-1.9.7-full.nupkg
           cp "$setup" ESTUDEX-Setup.exe
           cp "$setup" BLAZERX-Setup.exe
 
-      - name: Publish ESTUDEX v1.9.3 Hotfix 3
+      - name: Publish ESTUDEX v1.9.3 Hotfix 4
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           notes=$(cat <<'EOF'
-          ESTUDEX v1.9.3 — Hotfix 3
+          ESTUDEX v1.9.3 — Hotfix 4
 
-          Terceiro hotfix cumulativo da v1.9.3.
+          Quarto hotfix cumulativo da v1.9.3.
 
-          Corrige:
-          - salas recém-criadas passam a aparecer imediatamente e permanecer estáveis em Minhas salas;
-          - persistência local-first da sala, sem depender da reconciliação de rede para aparecer na interface;
-          - sair de uma sala não apaga mais a sala salva;
-          - proteção contra refresh fora de ordem que fazia a sala piscar, sumir ou reaparecer atrasada;
-          - exclusão continua removendo a sala definitivamente;
-          - entrada por Salas recentes agora tenta primeiro os dados/endpoints já salvos, sem descoberta Radmin ou timeout artificial antes da conexão;
-          - descoberta/reconciliação Radmin fica como fallback quando o endpoint salvo estiver ausente ou realmente falhar;
-          - clicar na mesma sala já conectada abre a sala sem ciclo desnecessário de desconexão/reconexão;
-          - Ver todos de Salas ao vivo agora abre a página Salas focando as salas ao vivo;
-          - Ver todos de Salas recentes agora abre a página Salas em Minhas salas/recentes;
-          - Ver todos de Amigos online agora abre a página Amigos em Disponível;
-          - preserva integralmente as correções dos Hotfixes 1 e 2 para Radmin, presença, amigos, perfil, convites, encerramento idempotente e salas fantasmas.
+          Corrige e consolida:
+          - convites de sala passam a usar presença realmente online, sem tratar status persistido como disponibilidade atual;
+          - aceitar/recusar convites e encerramento da sala ficam consistentes e idempotentes;
+          - sala criada pelo dono permanece imediatamente em Minhas salas e em Salas ao vivo enquanto estiver ativa;
+          - refresh de rede fora de ordem não pode mais apagar uma sala recém-criada;
+          - fechar/excluir uma sala cria estado dominante de remoção, impedindo refresh atrasado de ressuscitar salas fantasmas;
+          - Salas recentes entram primeiro pelos dados já conhecidos, com reconciliação Radmin somente como fallback;
+          - clicar na mesma sala conectada abre imediatamente sem ciclo desnecessário de reconexão;
+          - Ver todos da Home encaminha corretamente para Salas ao vivo, Minhas salas/recentes e Amigos disponíveis;
+          - mantém as correções anteriores de Radmin, presença, perfil, chamadas, mídia, áudio/mic, updater e ciclo de vida das salas.
 
-          A V10.10 original permanece como autoridade visual absoluta. home.js, home.css e os assets canônicos continuam preservados.
+          A V10.10 original permanece como autoridade visual absoluta. home.js, home.css e assets canônicos continuam preservados.
 
-          Revisão técnica do pacote/updater: 1.9.6
+          Revisão técnica do pacote/updater: 1.9.7
           Identidade Squirrel preservada: blazerx
 
           SHA-256 do instalador:
-          35fbe438f952880c842a6fb2352118940ef585ee8a188faf07075a1d61aaaa69
+          f9077b572acb250e1d8362eaaa9422146e85cf5e432e42e7dd4b1a8acc921a0d
           EOF
           )
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" ESTUDEX-Setup.exe BLAZERX-Setup.exe --clobber
-            gh release edit "$RELEASE_TAG" --title "ESTUDEX v1.9.3 — Hotfix 3" --notes "$notes" --latest
+            gh release edit "$RELEASE_TAG" --title "ESTUDEX v1.9.3 — Hotfix 4" --notes "$notes" --latest
           else
-            gh release create "$RELEASE_TAG" ESTUDEX-Setup.exe BLAZERX-Setup.exe --target main --title "ESTUDEX v1.9.3 — Hotfix 3" --notes "$notes" --latest
+            gh release create "$RELEASE_TAG" ESTUDEX-Setup.exe BLAZERX-Setup.exe --target main --title "ESTUDEX v1.9.3 — Hotfix 4" --notes "$notes" --latest
           fi
