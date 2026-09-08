@@ -1,4 +1,4 @@
-name: Publish ESTUDEX v1.9.3 Hotfix 6
+name: Publish ESTUDEX v1.9.3 Hotfix 7
 
 on:
   push:
@@ -15,15 +15,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      ARTIFACT_URL: "https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-f714-820e-9eb4-4b38b70897da/raw?se=2026-09-08T04%3A53%3A16Z&sp=r&sv=2026-02-06&sr=b&scid=226ae9a7-5438-546c-ae56-b74b3cfcba66&skoid=a6356955-0ca0-4033-9150-c0c162458498&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-07T12%3A18%3A14Z&ske=2026-09-08T12%3A18%3A14Z&sks=b&skv=2026-02-06&sig=xa6gKP8v0hmQUocN567LHHILnk0bslfKBz4IwNTDEjw%3D"
-      ARTIFACT_SHA256: 43d63bb63e60f07474e536c3a71de0f885df8bde016e2340b687f9b1181611d6
-      SETUP_SHA256: d73f564e77769c8d3aecb507a2f0483f0edc0ab040b7a49fe867147cb39d459c
-      RELEASE_TAG: v1.9.10-hotfix6
+      ARTIFACT_URL: "https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-4b10-820e-909a-6c1a4bfeb3f2/raw?se=2026-09-08T13%3A18%3A19Z&sp=r&sv=2026-02-06&sr=b&scid=042975cb-6b53-5932-8bb0-c7d8d857bc78&skoid=a6356955-0ca0-4033-9150-c0c162458498&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-08T09%3A51%3A31Z&ske=2026-09-09T09%3A51%3A31Z&sks=b&skv=2026-02-06&sig=Q6VMBatXLOqH9pjoozOAffhBRRDiRsYNZEmeNSnAhng%3D"
+      ARTIFACT_SHA256: 55df86381665753d654ee4330ab03980ef9858e98044e30e0de24a6a16a48f76
+      SETUP_SHA256: bfeeff865d7df25c1bf049a614f38b345baa1314fd8a73d58f22aa91d70788b3
+      RELEASE_TAG: v1.9.11-hotfix7
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download and verify Hotfix 6
+      - name: Download and verify Hotfix 7
         shell: bash
         run: |
           set -euo pipefail
@@ -38,42 +38,39 @@ jobs:
           cp "$setup" ESTUDEX-Setup.exe
           cp "$setup" BLAZERX-Setup.exe
 
-      - name: Publish ESTUDEX v1.9.3 Hotfix 6
+      - name: Publish ESTUDEX v1.9.3 Hotfix 7
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           notes=$(cat <<'EOF'
-          ESTUDEX v1.9.3 — Hotfix 6
+          ESTUDEX v1.9.3 — Hotfix 7
 
-          Sexto hotfix cumulativo da v1.9.3.
+          Sétimo hotfix cumulativo da v1.9.3.
 
           Corrige e consolida:
-          - corrige o loop de atualização social que podia travar Pendentes/Disponível/Bloqueados e elevar CPU/RAM;
-          - agrupa refresh social/Radmin e impede reconciliações pesadas concorrentes;
-          - corrige persistência parcial de avatar/banner e reduz duplicação de mídia no armazenamento local;
-          - corrige a detecção real da rede Radmin quando existe endpoint 26.x utilizável;
-          - corrige o aceite de amizade para usar o protocolo recipientId/senderId no endpoint Radmin atual;
-          - melhora o desempenho da sala/transmissão, evitando repaint por ping/atividade de voz, scans escondidos e polling ocioso excessivo;
-          - limita budgets WebRTC por resolução/FPS e limpa peers/streams encerrados para reduzir consumo durante transmissão;
-          - adiciona diagnóstico e recuperação para renderer crash, OOM e abnormal exit;
-          - repara a entrada de desinstalação Squirrel blazerx, atualiza DisplayVersion/UninstallString e remove com guarda a entrada legada estudex pertencente ao próprio ESTUDEX;
-          - corrige o cenário em que versões antigas e novas apareciam duplicadas em Programas e Recursos;
-          - mantém os reparos anteriores de convites, bloqueios, recuperação WebRTC, Radmin e persistência de salas.
+          - corrige os botões Aceitar e Recusar em solicitações de amizade pendentes;
+          - usa a identidade real do remetente da solicitação, evitando ações presas em IDs antigos do pedido;
+          - o estado Online de pedidos pendentes agora segue a presença atual da rede Radmin: peer fora da rede aparece offline no ESTUDEX;
+          - o aceite de amizade passa a ser local-first quando o remetente está offline, com sincronização remota em melhor esforço quando ele voltar a ficar acessível;
+          - preserva avatar e banner durante bootstrap, atualização e salvamentos parciais, sem apagar mídia existente por valores vazios;
+          - espelha/restaura avatar e banner no armazenamento nativo persistente do ESTUDEX;
+          - impede que a imagem de fundo do lobby seja apagada por estado vazio durante bootstrap/atualização;
+          - mantém os reparos do Hotfix 6 para estabilidade social/Radmin, desempenho de sala/transmissão, WebRTC, diagnóstico de crash/OOM e registro de desinstalação Squirrel.
 
           A V10.10 original permanece como autoridade visual absoluta. home.js e home.css canônicos continuam preservados byte por byte.
 
-          Revisão técnica do pacote/updater: 1.9.10
+          Revisão técnica do pacote/updater: 1.9.11
           Identidade Squirrel preservada: blazerx
 
           SHA-256 do instalador:
-          d73f564e77769c8d3aecb507a2f0483f0edc0ab040b7a49fe867147cb39d459c
+          bfeeff865d7df25c1bf049a614f38b345baa1314fd8a73d58f22aa91d70788b3
           EOF
           )
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" ESTUDEX-Setup.exe BLAZERX-Setup.exe --clobber
-            gh release edit "$RELEASE_TAG" --title "ESTUDEX v1.9.3 — Hotfix 6" --notes "$notes" --latest
+            gh release edit "$RELEASE_TAG" --title "ESTUDEX v1.9.3 — Hotfix 7" --notes "$notes" --latest
           else
-            gh release create "$RELEASE_TAG" ESTUDEX-Setup.exe BLAZERX-Setup.exe --target main --title "ESTUDEX v1.9.3 — Hotfix 6" --notes "$notes" --latest
+            gh release create "$RELEASE_TAG" ESTUDEX-Setup.exe BLAZERX-Setup.exe --target main --title "ESTUDEX v1.9.3 — Hotfix 7" --notes "$notes" --latest
           fi
