@@ -1,4 +1,4 @@
-name: Publish ESTUDEX v1.9.3 Hotfix 9
+name: Publish ESTUDEX v1.9.3 Hotfix 12
 
 on:
   push:
@@ -15,15 +15,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      ARTIFACT_URL: "https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-c6ac-820e-b3d3-bd26269f4904/raw?se=2026-09-08T21%3A56%3A19Z&sp=r&sv=2026-02-06&sr=b&scid=14e84ae1-d34e-53a1-8699-6842f48fa0e4&skoid=a6356955-0ca0-4033-9150-c0c162458498&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-08T19%3A16%3A55Z&ske=2026-09-09T19%3A16%3A55Z&sks=b&skv=2026-02-06&sig=Tw1IrZ/6n1OEzsopczHKp89yKBf%2B0ye6x/xAtV0/vSI%3D"
-      ARTIFACT_SHA256: be5474c9c4082f2697883f170bcdd991232bbc0daa0531866f237beb679138be
-      SETUP_SHA256: b271fbaa4bf8d5a6d461c0ff807364e69ace2d2dbd3e0bc2a9c556aac08ec3a8
-      RELEASE_TAG: v1.9.13-hotfix9
+      ARTIFACT_URL: "https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-bb94-820e-b523-4bf0bf7c09a5/raw?se=2026-09-09T15%3A20%3A16Z&sp=r&sv=2026-02-06&sr=b&scid=aec77df6-a440-5510-9a2d-eceb933f9220&skoid=a6356955-0ca0-4033-9150-c0c162458498&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-09T08%3A59%3A19Z&ske=2026-09-10T08%3A59%3A19Z&sks=b&skv=2026-02-06&sig=kZExj4GTa3Ql%2B98hJTZDciUlYvxz4BzJ3UX5Z4bfbXI%3D"
+      ARTIFACT_SHA256: d74f3fe40258f583edd37bb429513b9326ad67f3add3fdbc841447b678d67f01
+      SETUP_SHA256: bc8e0f8830a0134cc79e6a639a4722c92a6f4913b8c3354865b3193eb00f9a2a
+      RELEASE_TAG: v1.9.16-hotfix12
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download and verify Hotfix 9
+      - name: Download and verify Hotfix 12
         shell: bash
         run: |
           set -euo pipefail
@@ -38,37 +38,40 @@ jobs:
           cp "$setup" ESTUDEX-Setup.exe
           cp "$setup" BLAZERX-Setup.exe
 
-      - name: Publish ESTUDEX v1.9.3 Hotfix 9
+      - name: Publish ESTUDEX v1.9.3 Hotfix 12
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           notes=$(cat <<'EOF'
-          ESTUDEX v1.9.3 — Hotfix 9
+          ESTUDEX v1.9.3 — Hotfix 12
 
-          Nono hotfix cumulativo da v1.9.3.
+          Décimo segundo hotfix cumulativo da v1.9.3.
 
           Corrige e consolida:
-          - persistência nativa real de foto de perfil, banner e imagem de fundo do lobby no aplicativo empacotado;
-          - gravações parciais ou vazias do perfil passam a preservar avatar e banner já salvos, evitando regressão após reinício ou atualização;
-          - Aceitar/Recusar solicitações pendentes usa diretamente o requestId já renderizado e conclui a decisão local sem depender de listPending, Radmin ou disponibilidade do peer;
-          - tombstone e remoção visual da solicitação acontecem localmente antes da sincronização remota, que segue em segundo plano e em melhor esforço;
-          - solicitações pendentes começam Offline e só aparecem Online após prova atual e verificada do transporte Radmin;
+          - corrige definitivamente o clique real em Aceitar/Recusar no menu de pedidos pendentes;
+          - remove o bloqueio invisível causado pelo friendMenuBackdrop, que possuía prioridade de hit-test acima da página de Amigos apesar de o menu continuar visível;
+          - o backdrop deixa de capturar o ponteiro sobre o menu, mantendo fechamento seguro ao clicar fora;
+          - preserva requestId exato, remoção local imediata, tombstone persistente e sincronização remota em segundo plano;
+          - mantém presença de pendentes Offline até existir prova Radmin atual da identidade exata;
+          - mantém persistência nativa de avatar, banner e wallpaper após reinício/atualização;
           - preserva cumulativamente os reparos anteriores de amizade, presença, salas, transmissão, WebRTC, updater e estabilidade.
+
+          Esta revisão foi validada no app empacotado e confirmada em teste real do ESTUDEX instalado.
 
           A V10.10 original permanece como autoridade visual absoluta. home.js e home.css canônicos continuam preservados byte por byte.
 
-          Revisão técnica do pacote/updater: 1.9.13
+          Revisão técnica do pacote/updater: 1.9.16
           Identidade Squirrel preservada: blazerx
 
           SHA-256 do instalador:
-          b271fbaa4bf8d5a6d461c0ff807364e69ace2d2dbd3e0bc2a9c556aac08ec3a8
+          bc8e0f8830a0134cc79e6a639a4722c92a6f4913b8c3354865b3193eb00f9a2a
           EOF
           )
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" ESTUDEX-Setup.exe BLAZERX-Setup.exe --clobber
-            gh release edit "$RELEASE_TAG" --title "ESTUDEX v1.9.3 — Hotfix 9" --notes "$notes" --latest
+            gh release edit "$RELEASE_TAG" --title "ESTUDEX v1.9.3 — Hotfix 12" --notes "$notes" --latest
           else
-            gh release create "$RELEASE_TAG" ESTUDEX-Setup.exe BLAZERX-Setup.exe --target main --title "ESTUDEX v1.9.3 — Hotfix 9" --notes "$notes" --latest
+            gh release create "$RELEASE_TAG" ESTUDEX-Setup.exe BLAZERX-Setup.exe --target main --title "ESTUDEX v1.9.3 — Hotfix 12" --notes "$notes" --latest
           fi
