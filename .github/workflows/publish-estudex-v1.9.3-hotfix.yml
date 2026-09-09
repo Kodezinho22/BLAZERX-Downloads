@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      ARTIFACT_URL: "https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-bb94-820e-b523-4bf0bf7c09a5/raw?se=2026-09-09T15%3A20%3A16Z&sp=r&sv=2026-02-06&sr=b&scid=aec77df6-a440-5510-9a2d-eceb933f9220&skoid=a6356955-0ca0-4033-9150-c0c162458498&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-09T08%3A59%3A19Z&ske=2026-09-10T08%3A59%3A19Z&sks=b&skv=2026-02-06&sig=kZExj4GTa3Ql%2B98hJTZDciUlYvxz4BzJ3UX5Z4bfbXI%3D"
+      ARTIFACT_URL: "https://sdmntprkoreacentral.oaiusercontent.com/files/00000000-3968-8206-be59-df437f6e3dba/raw?se=2026-09-09T16%3A01%3A45Z&sp=r&sv=2026-02-06&sr=b&scid=6f66758e-fbbc-53ce-9139-c0178d5fadd6&skoid=a6356955-0ca0-4033-9150-c0c162458498&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-09T15%3A02%3A26Z&ske=2026-09-10T15%3A02%3A26Z&sks=b&skv=2026-02-06&sig=i1EQFAv8GkGJj/cTe0Y%2Bsb1gU4eypa3HJ475VgZS7/k%3D"
       ARTIFACT_SHA256: d74f3fe40258f583edd37bb429513b9326ad67f3add3fdbc841447b678d67f01
       SETUP_SHA256: bc8e0f8830a0134cc79e6a639a4722c92a6f4913b8c3354865b3193eb00f9a2a
       RELEASE_TAG: v1.9.16-hotfix12
