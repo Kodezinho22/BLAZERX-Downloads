@@ -1,0 +1,79 @@
+name: Publish ESTUDEX v1.9.3 Hotfix 13
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/publish-estudex-v1.9.3-hotfix13.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ARTIFACT_URL: "https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-1268-820e-b413-6cb4099ebaa5/raw?se=2026-09-13T20%3A20%3A15Z&sp=r&sv=2026-02-06&sr=b&scid=57221930-edba-5051-8071-5b2d9c570199&skoid=4a431cd2-eafd-49c7-90be-bbb4d45e696d&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-12T23%3A15%3A48Z&ske=2026-09-13T23%3A15%3A48Z&sks=b&skv=2026-02-06&sig=ljJLL0%2BMBLOwK5RPnqupiBZxHHE7LcmYJt6TjoCpK/s%3D"
+      ARTIFACT_SHA256: b61d92cbdb5141f99230559036d30e54c8a9ba21db1f5fd235fb952be27bf729
+      SETUP_SHA256: 836f40db86a1cb8a568e93563bcae8df9236e4ab90b6f4d08ec5620dba3241d2
+      RELEASE_TAG: v1.9.17-hotfix13
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download and verify Hotfix 13
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-delay 2 "$ARTIFACT_URL" -o artifact.zip
+          echo "$ARTIFACT_SHA256  artifact.zip" | sha256sum -c -
+          mkdir artifact
+          unzip -q artifact.zip -d artifact
+          count="$(find artifact -type f -name 'ESTUDEX-Setup.exe' | wc -l | tr -d ' ')"
+          test "$count" = "1"
+          setup="$(find artifact -type f -name 'ESTUDEX-Setup.exe' -print -quit)"
+          echo "$SETUP_SHA256  $setup" | sha256sum -c -
+          cp "$setup" ESTUDEX-Setup.exe
+          cp "$setup" BLAZERX-Setup.exe
+
+      - name: Publish ESTUDEX v1.9.3 Hotfix 13
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          notes=$(cat <<'EOF'
+          ESTUDEX v1.9.3 — Hotfix 13
+
+          Atualização cumulativa real com revisão técnica 1.9.17.
+
+          Corrige e consolida:
+          - reforça a prontidão do Radmin: adaptador ou IP isolado não significam conexão pronta;
+          - exige link Radmin 26.x válido, servidor local do ESTUDEX pronto e validação de firewall/rede antes do estado verde;
+          - não mascara mais falhas na inicialização do servidor local do ESTUDEX;
+          - protege o heartbeat social contra execuções sobrepostas;
+          - mantém presença Invisível coerente sem promover peers para online à força;
+          - preserva e reforça a autocorreção de endpoints antigos de amigos e salas;
+          - corrige o click-through após o fechamento do menu de pedidos pendentes;
+          - adiciona regressão comportamental para o fluxo pointerdown -> fechamento -> click;
+          - preserva cumulativamente os reparos anteriores de amizade, presença, salas, transmissão, WebRTC, updater e estabilidade.
+
+          A revisão foi reconstruída do zero e validada no GitHub Actions, incluindo verificação do pacote Squirrel 1.9.17 e dos contratos cumulativos.
+
+          A V10.10 original permanece como autoridade visual absoluta. home.js e home.css canônicos continuam preservados byte por byte.
+
+          Revisão técnica do pacote/updater: 1.9.17
+          Identidade Squirrel preservada: blazerx
+          Commit validado: 824bf64b10431c7bd2c6b755cb2dc62ebab5365f
+
+          SHA-256 do instalador:
+          836f40db86a1cb8a568e93563bcae8df9236e4ab90b6f4d08ec5620dba3241d2
+          EOF
+          )
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG já existe; recusando sobrescrever uma atualização versionada." >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" ESTUDEX-Setup.exe BLAZERX-Setup.exe --target main --title "ESTUDEX v1.9.3 — Hotfix 13" --notes "$notes" --latest
