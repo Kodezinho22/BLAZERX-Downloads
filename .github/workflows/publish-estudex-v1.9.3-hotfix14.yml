@@ -1,0 +1,88 @@
+name: Publish ESTUDEX v1.9.3 Hotfix 14
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/publish-estudex-v1.9.3-hotfix14.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ARTIFACT_URL: "https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-f004-820e-98dd-4a7ff81b805e/raw?se=2026-09-13T23%3A08%3A44Z&sp=r&sv=2026-02-06&sr=b&scid=b77b6fd2-a00d-5e8c-9ff6-2f80f11400f1&skoid=4a431cd2-eafd-49c7-90be-bbb4d45e696d&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-13T11%3A16%3A42Z&ske=2026-09-14T11%3A16%3A42Z&sks=b&skv=2026-02-06&sig=zJC4fxF142YtNqnywUIWdt42knTXeyw5mnmIuAM2%2B1c%3D"
+      ARTIFACT_SHA256: 9679bfa5e1d5888218f737ad36dc6c9fc64eba82b0a084456e54f250fe483cd0
+      SETUP_SHA256: e2a4bc7a52834c0b26fa8f82792b91b758b91323a064a704a4f5f690db2d22e5
+      RELEASE_TAG: v1.9.18-hotfix14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download and verify Hotfix 14
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-delay 2 "$ARTIFACT_URL" -o artifact.zip
+          echo "$ARTIFACT_SHA256  artifact.zip" | sha256sum -c -
+          mkdir artifact
+          unzip -q artifact.zip -d artifact
+          count="$(find artifact -type f -name 'ESTUDEX-Setup.exe' | wc -l | tr -d ' ')"
+          test "$count" = "1"
+          setup="$(find artifact -type f -name 'ESTUDEX-Setup.exe' -print -quit)"
+          echo "$SETUP_SHA256  $setup" | sha256sum -c -
+          nupkg="$(find artifact -type f -name 'blazerx-1.9.18-full.nupkg' -print -quit)"
+          test -n "$nupkg"
+          cp "$setup" ESTUDEX-Setup.exe
+          cp "$setup" BLAZERX-Setup.exe
+
+      - name: Publish ESTUDEX v1.9.3 Hotfix 14
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          notes=$(cat <<'EOF'
+          ESTUDEX v1.9.3 — Hotfix 14
+
+          Atualização cumulativa real com revisão técnica 1.9.18.
+
+          Principais correções:
+          - reforça a descoberta de usuários ESTUDEX na rede Radmin com identidade verificada em endereços 26.x;
+          - atualização forçada de peers não reutiliza cache, grace ou descoberta antiga;
+          - descoberta profunda passa a cobrir múltiplos snapshots verificados, reduzindo usuários que somem ou aparecem Offline incorretamente;
+          - mantém uma tolerância curta somente na atualização automática para evitar a lista piscando entre Online/Offline;
+          - oferece transmissão imediatamente aos membros que já estavam na sala quando tela/câmera/voz entram ao vivo;
+          - pré-aquece o transporte WebRTC da tela para reduzir o tempo de abertura da transmissão;
+          - usa replaceTrack no caminho rápido quando a tela começa a ser compartilhada;
+          - adiciona recuperação limitada e watchdog para evitar “Conectando...” infinito;
+          - considera a track remota real para decidir quando uma transmissão está pronta;
+          - corrige a separação do HUD de qualidade em relação ao botão de sair da transmissão;
+          - reforça a entrada em salas pela página Salas pelo mesmo room:join do motor principal;
+          - preserva os reparos cumulativos anteriores de amizade, presença, salas, updater, chamadas e estabilidade.
+
+          Privacidade de áudio:
+          - o loopback geral de áudio do Windows continua bloqueado para não vazar Discord, Spotify ou outros aplicativos ao compartilhar uma janela específica;
+          - esta build não reativa captura genérica de áudio do sistema. O isolamento seletivo de áudio por aplicativo permanece separado deste release.
+
+          A revisão foi reconstruída e validada no GitHub Actions, incluindo pacote Squirrel 1.9.18, comportamento pré-pacote, comportamento do pacote final e contratos cumulativos do Hotfix 14.
+
+          A V10.10 original permanece como autoridade visual. home.js e home.css canônicos continuam preservados byte por byte.
+
+          Revisão técnica do pacote/updater: 1.9.18
+          Identidade Squirrel preservada: blazerx
+          Commit validado: a7b4c6281ff4b19ba55c903907350a8ae4e17154
+
+          SHA-256 do instalador:
+          e2a4bc7a52834c0b26fa8f82792b91b758b91323a064a704a4f5f690db2d22e5
+          EOF
+          )
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG já existe; recusando sobrescrever uma atualização versionada." >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" ESTUDEX-Setup.exe BLAZERX-Setup.exe --target main --title "ESTUDEX v1.9.3 — Hotfix 14" --notes "$notes" --latest
