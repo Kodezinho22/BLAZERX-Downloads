@@ -15,9 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      ARTIFACT_URL: "https://sdmntprkoreacentral.oaiusercontent.com/files/00000000-3968-8206-be59-df437f6e3dba/raw?se=2026-09-09T16%3A01%3A45Z&sp=r&sv=2026-02-06&sr=b&scid=6f66758e-fbbc-53ce-9139-c0178d5fadd6&skoid=a6356955-0ca0-4033-9150-c0c162458498&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-09T15%3A02%3A26Z&ske=2026-09-10T15%3A02%3A26Z&sks=b&skv=2026-02-06&sig=i1EQFAv8GkGJj/cTe0Y%2Bsb1gU4eypa3HJ475VgZS7/k%3D"
-      ARTIFACT_SHA256: d74f3fe40258f583edd37bb429513b9326ad67f3add3fdbc841447b678d67f01
-      SETUP_SHA256: bc8e0f8830a0134cc79e6a639a4722c92a6f4913b8c3354865b3193eb00f9a2a
+      ARTIFACT_URL: "https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-f83c-820e-9933-adb1db92f45d/raw?se=2026-09-13T20%3A06%3A29Z&sp=r&sv=2026-02-06&sr=b&scid=029f8e37-8f72-5e84-8fea-cc26db29cbf3&skoid=4a431cd2-eafd-49c7-90be-bbb4d45e696d&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-13T12%3A23%3A36Z&ske=2026-09-14T12%3A23%3A36Z&sks=b&skv=2026-02-06&sig=g9L56zJO%2BARI7fOyTBeHP6O3C5CRxcmKdrhqfdDr7Wo%3D"
+      ARTIFACT_SHA256: 2936780482e659872351e3289bbd043ea215019d88e3eb5fe3a6c538ad2b5805
+      SETUP_SHA256: 24362d99d6b45c59dd8d85f69bb74ea5257249f3adc4fc35dbf9b8d8510a39e2
       RELEASE_TAG: v1.9.16-hotfix12
 
     steps:
@@ -47,26 +47,31 @@ jobs:
           notes=$(cat <<'EOF'
           ESTUDEX v1.9.3 — Hotfix 12
 
-          Décimo segundo hotfix cumulativo da v1.9.3.
+          Décimo segundo hotfix cumulativo da v1.9.3, republicado após auditoria técnica da revisão 1.9.16.
 
           Corrige e consolida:
           - corrige definitivamente o clique real em Aceitar/Recusar no menu de pedidos pendentes;
-          - remove o bloqueio invisível causado pelo friendMenuBackdrop, que possuía prioridade de hit-test acima da página de Amigos apesar de o menu continuar visível;
-          - o backdrop deixa de capturar o ponteiro sobre o menu, mantendo fechamento seguro ao clicar fora;
+          - impede click-through após o fechamento do menu e adiciona regressão comportamental para esse fluxo;
+          - remove o bloqueio invisível causado pelo friendMenuBackdrop, preservando fechamento seguro ao clicar fora;
+          - reforça a prontidão do Radmin: adaptador/IP sozinho não significa conexão pronta;
+          - exige link Radmin 26.x válido, servidor local ESTUDEX pronto e validação de firewall/rede antes do estado verde;
+          - não mascara mais falhas de inicialização do servidor local do ESTUDEX;
+          - protege o heartbeat social contra execuções sobrepostas;
+          - mantém presença Invisível coerente sem promover peers para online à força;
           - preserva requestId exato, remoção local imediata, tombstone persistente e sincronização remota em segundo plano;
-          - mantém presença de pendentes Offline até existir prova Radmin atual da identidade exata;
           - mantém persistência nativa de avatar, banner e wallpaper após reinício/atualização;
           - preserva cumulativamente os reparos anteriores de amizade, presença, salas, transmissão, WebRTC, updater e estabilidade.
 
-          Esta revisão foi validada no app empacotado e confirmada em teste real do ESTUDEX instalado.
+          A revisão foi reconstruída do zero e validada no GitHub Actions com todos os contratos cumulativos e Hotfix 12 aprovados.
 
           A V10.10 original permanece como autoridade visual absoluta. home.js e home.css canônicos continuam preservados byte por byte.
 
           Revisão técnica do pacote/updater: 1.9.16
           Identidade Squirrel preservada: blazerx
+          Commit validado: bc78ebcd4dcfda0b44937dc2ffaca39c9c1686cf
 
           SHA-256 do instalador:
-          bc8e0f8830a0134cc79e6a639a4722c92a6f4913b8c3354865b3193eb00f9a2a
+          24362d99d6b45c59dd8d85f69bb74ea5257249f3adc4fc35dbf9b8d8510a39e2
           EOF
           )
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
