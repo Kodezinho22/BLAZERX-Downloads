@@ -1,0 +1,466 @@
+/* ESTUDEX_V193_HOTFIX22_CLOUD_SOCIAL */
+(() => {
+  'use strict';
+  const root = globalThis;
+  const DEFAULT_BASE = 'https://estudexserver-2mccfr6f.b4a.run';
+  const REMOTE_CONFIG_URL = 'https://raw.githubusercontent.com/Kodezinho22/BLAZERX-Downloads/main/config/estudex-cloud.json';
+  const BASE_KEY = 'estudex-cloud-backend-base-v1926';
+  const FALLBACK_TOKEN_KEY = 'estudex-cloud-session-fallback-v1926';
+  const listeners = { profile:new Set(), social:new Set(), dm:new Set(), auth:new Set(), roomInvite:new Set() };
+  const state = { base:'', token:'', user:null, socket:null, socketRetry:null, ready:false, search:[], pending:[], roomInvites:[], dmCache:new Map() };
+  const previous = root.__estudexCleanroomAdapters || {};
+  const roomRegistry = root.__estudexCleanroomRoomMediaAdapters || {};
+
+  const clean = value => String(value ?? '').trim();
+  const statusKey = value => {
+    const t=clean(value).normalize?.('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()||'';
+    if(t==='away'||t==='ausente')return 'away';
+    if(t==='dnd'||t==='nao perturbar')return 'dnd';
+    if(t==='invisible'||t==='invisivel')return 'invisible';
+    return 'available';
+  };
+  const statusLabel = value => ({available:'Disponível',away:'Ausente',dnd:'Não perturbar',invisible:'Invisível'})[statusKey(value)] || 'Disponível';
+  const validBase = value => /^https?:\/\//i.test(clean(value)) ? clean(value).replace(/\/$/,'') : '';
+  const emit = (domain,payload={}) => { for(const fn of [...(listeners[domain]||[])]) { try{fn(payload);}catch{} } };
+  const on = (domain,fn) => { if(typeof fn!=='function')return()=>{}; listeners[domain].add(fn); return()=>listeners[domain].delete(fn); };
+  const authHeaders = () => state.token ? {Authorization:'Bearer '+state.token} : {};
+
+  async function resolveBase(){
+    const override=validBase(localStorage.getItem(BASE_KEY));
+    if(override){state.base=override;syncRoomBase(override);return override;}
+    try{
+      const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),2500);
+      const res=await fetch(REMOTE_CONFIG_URL,{cache:'no-store',signal:controller.signal});clearTimeout(timer);
+      const data=await res.json().catch(()=>({}));const remote=validBase(data?.backendBase||data?.base||data?.url);
+      if(res.ok&&remote){state.base=remote;syncRoomBase(remote);return remote;}
+    }catch{}
+    state.base=DEFAULT_BASE;syncRoomBase(state.base);return state.base;
+  }
+  function syncRoomBase(base){
+    const value=validBase(base);if(!value)return;
+    try{localStorage.setItem('estudex-cloud-room-base-v1924',value);}catch{}
+    try{root.ESTUDEX_CLOUD_ROOM_BASE=value;}catch{}
+  }
+  async function request(path, options={}){
+    const base=state.base||await resolveBase();
+    const controller=new AbortController();const timeout=Math.max(2500,Number(options.timeout||8000));const timer=setTimeout(()=>controller.abort(),timeout);
+    try{
+      const headers={...(options.body!==undefined?{'Content-Type':'application/json'}:{}),...(options.auth===false?{}:authHeaders()),...(options.headers||{})};
+      const res=await fetch(base+path,{method:options.method||'GET',headers,body:options.body===undefined?undefined:JSON.stringify(options.body),signal:controller.signal,cache:'no-store'});
+      const data=await res.json().catch(()=>({}));
+      if(!res.ok||data?.ok===false){const error=new Error(data?.error||data?.message||('HTTP '+res.status));error.status=res.status;error.code=data?.code||'';error.data=data;throw error;}
+      return data;
+    } finally { clearTimeout(timer); }
+  }
+
+  async function readToken(){
+    try{const value=await root.EstudexNative?.authSession?.get?.();if(value?.token)return clean(value.token);}catch{}
+    try{return clean(localStorage.getItem(FALLBACK_TOKEN_KEY));}catch{return'';}
+  }
+  async function writeToken(token){
+    state.token=clean(token);
+    let nativeOk=false;
+    try{const result=await root.EstudexNative?.authSession?.set?.(state.token);nativeOk=Boolean(result?.ok);}catch{}
+    if(!nativeOk){try{localStorage.setItem(FALLBACK_TOKEN_KEY,state.token);}catch{}}
+    else try{localStorage.removeItem(FALLBACK_TOKEN_KEY);}catch{}
+  }
+  async function clearToken(){
+    state.token='';
+    try{await root.EstudexNative?.authSession?.clear?.();}catch{}
+    try{localStorage.removeItem(FALLBACK_TOKEN_KEY);}catch{}
+  }
+
+  function mapPublicUser(user, relation='friend'){
+    if(!user)return null;
+    const id=clean(user.id||user.objectId);if(!id)return null;
+    const status=statusKey(user.status);
+    return {
+      id, socialId:id,
+      name:clean(user.displayName||user.name||user.handle||user.username)||'Usuário',
+      username:clean(user.handle||user.username)||id,
+      tag:clean(user.handle||user.username),
+      avatar:typeof user.avatar==='string'?user.avatar:'',banner:typeof user.banner==='string'?user.banner:'',
+      bio:clean(user.bio),about:clean(user.bio),status:statusLabel(status),state:user.online===true?(status==='invisible'?'offline':status):'offline',
+      online:Boolean(user.online&&status!=='invisible'),relation,accountType:user.accountType||'guest',
+      discoveryMode:user.discoveryMode||'everyone',friendRequestMode:user.friendRequestMode||'everyone'
+    };
+  }
+  function ownProfile(){
+    const u=state.user;
+    if(!u)return null;
+    return {name:clean(u.displayName||u.name)||'Usuário',avatar:u.avatar||'',banner:u.banner||'',bio:u.bio||'',status:statusLabel(u.status),tag:clean(u.handle||u.username)};
+  }
+  function setUser(user,{emitProfile=true}={}){
+    state.user=user?{...user}:null;
+    if(state.user?.id){
+      try{localStorage.setItem('estudex-social-id-v1',state.user.id);}catch{}
+      try{localStorage.setItem('estudex-profile-username-v193',clean(state.user.displayName||state.user.name)||'Usuário');localStorage.setItem('estudex-profile-ready-v193','1');}catch{}
+    }
+    if(emitProfile&&state.user)emit('profile',{type:'profile',profile:ownProfile()});
+    emit('auth',{type:'user',user:state.user?{...state.user}:null});
+    updateAccountPanel();
+  }
+
+  async function login(loginValue,password){
+    const data=await request('/api/auth/login',{method:'POST',auth:false,body:{login:loginValue,password}});
+    await writeToken(data.sessionToken);setUser(data.user);await afterAuth();return data.user;
+  }
+  async function register(input){
+    const data=await request('/api/auth/register',{method:'POST',auth:false,body:input});
+    await writeToken(data.sessionToken);setUser(data.user);await afterAuth();return data.user;
+  }
+  async function guest(displayName){
+    const data=await request('/api/auth/guest',{method:'POST',auth:false,body:{displayName:clean(displayName)||'Guest'}});
+    await writeToken(data.sessionToken);setUser(data.user);await afterAuth();return data.user;
+  }
+  async function upgradeGuest(input){
+    const data=await request('/api/auth/upgrade-guest',{method:'POST',body:input});if(data.sessionToken)await writeToken(data.sessionToken);setUser(data.user);applyCloudIdentityToCanonical();return data.user;
+  }
+  async function forgotPassword(email){return request('/api/auth/forgot-password',{method:'POST',auth:false,body:{email}});}
+  async function logout(){try{await request('/api/auth/logout',{method:'POST'});}catch{}await clearToken();disconnectSocket();setUser(null);showAuthOverlay('login');}
+
+  async function restoreSession(){
+    await resolveBase();state.token=await readToken();
+    if(!state.token)return false;
+    try{const data=await request('/api/me');setUser(data.user,{emitProfile:false});return true;}
+    catch{await clearToken();return false;}
+  }
+  async function afterAuth(){
+    hideAuthOverlay();connectSocket();
+    await Promise.allSettled([refreshFriends(),refreshPending(),refreshBlocked(),refreshDm(),refreshRoomInvites()]);
+    emit('profile',{type:'profile',profile:ownProfile()});
+    emit('social',{type:'refresh'});emit('dm',{type:'refresh'});
+    applyCloudIdentityToCanonical();
+  }
+
+  async function saveProfile(input={}){
+    let local=null;try{local=await previous.profile?.save?.(input);}catch{}
+    if(!state.token||!state.user)return local||input;
+    const source={...(local||{}),...input};const body={};
+    if('name' in source||'displayName' in source)body.displayName=clean(source.displayName||source.name);
+    if('bio' in source)body.bio=clean(source.bio);
+    if('status' in source)body.status=statusKey(source.status);
+    if('avatar' in source&&typeof source.avatar==='string'&&source.avatar.length<=2500000)body.avatar=source.avatar;
+    if('banner' in source&&typeof source.banner==='string'&&source.banner.length<=4500000)body.banner=source.banner;
+    if(Object.keys(body).length){const data=await request('/api/me',{method:'PATCH',body});setUser(data.user);}
+    return ownProfile()||local||source;
+  }
+  async function getProfile(){if(state.user)return ownProfile();try{return await previous.profile?.get?.();}catch{return{name:'Usuário',avatar:'',banner:'',bio:'',status:'Disponível',tag:''};}}
+
+  let friendsCache=[], blockedCache=[];
+  async function refreshFriends(){if(!state.token){friendsCache=[];return[];}const data=await request('/api/friends');friendsCache=(data.friends||[]).map(u=>mapPublicUser(u,'friend')).filter(Boolean);return friendsCache.map(x=>({...x}));}
+  async function listFriends(){return refreshFriends();}
+  async function refreshPending(){if(!state.token){state.pending=[];return[];}const data=await request('/api/friends/requests');state.pending=(data.requests||[]).map(r=>({
+    id:r.id,requestId:r.id,type:'friend-request',senderId:r.senderId,receiverId:r.receiverId,pendingDirection:r.direction,
+    senderProfile:r.direction==='incoming'?{name:r.user?.displayName||r.user?.name,avatar:r.user?.avatar,bio:r.user?.bio,status:r.user?.status}:null,
+    user:mapPublicUser(r.user,'pending'),createdAt:r.createdAt
+  }));return state.pending.map(x=>({...x}));}
+  async function listPending(){return refreshPending();}
+  async function refreshBlocked(){if(!state.token){blockedCache=[];return[];}const data=await request('/api/blocks');blockedCache=(data.users||[]).map(u=>mapPublicUser(u,'blocked')).filter(Boolean);return blockedCache.map(x=>({...x}));}
+  async function listBlocked(){return refreshBlocked();}
+  async function searchUsers(q){if(!state.token)return[];const data=await request('/api/users/search?q='+encodeURIComponent(clean(q)));state.search=(data.users||[]).map(u=>({...mapPublicUser(u,u.relationship==='friend'?'friend':'network'),relationship:u.relationship||'none'}));return state.search.map(x=>({...x}));}
+  async function sendFriendRequest(target){const id=clean(target?.id||target);if(!id)throw new Error('Usuário inválido.');const data=await request('/api/friends/requests',{method:'POST',body:{receiverId:id}});await refreshPending();emit('social',{type:'friend-request'});return data;}
+  async function acceptFriendRequest(id){await request('/api/friends/requests/'+encodeURIComponent(clean(id))+'/accept',{method:'POST'});await Promise.all([refreshFriends(),refreshPending()]);emit('social',{type:'friendship'});return true;}
+  async function dismissPending(id){
+    const key=clean(id);const item=state.pending.find(x=>x.id===key||x.requestId===key);
+    if(item?.pendingDirection==='outgoing')await request('/api/friends/requests/'+encodeURIComponent(key),{method:'DELETE'});
+    else await request('/api/friends/requests/'+encodeURIComponent(key)+'/reject',{method:'POST'});
+    await refreshPending();emit('social',{type:'pending'});return true;
+  }
+  async function removeFriend(id){await request('/api/friends/'+encodeURIComponent(clean(id)),{method:'DELETE'});await refreshFriends();emit('social',{type:'friends'});return true;}
+  async function block(id){await request('/api/blocks/'+encodeURIComponent(clean(id)),{method:'POST'});await Promise.all([refreshFriends(),refreshPending(),refreshBlocked()]);emit('social',{type:'blocked'});return true;}
+  async function unblock(id){await request('/api/blocks/'+encodeURIComponent(clean(id)),{method:'DELETE'});await refreshBlocked();emit('social',{type:'blocked'});return true;}
+  async function getPublicProfile(subject){const id=clean(subject?.id||subject);if(!id)throw new Error('Perfil inválido.');if(state.user?.id===id)return{...mapPublicUser(state.user,'self'),online:true};const data=await request('/api/users/'+encodeURIComponent(id));return mapPublicUser(data.user,'friend');}
+
+  function mapDmMessage(m,peerId){const own=state.user?.id;return{id:m.id,direction:m.senderId===own?'out':'in',text:m.text,at:Date.parse(m.createdAt)||Date.now(),createdAt:m.createdAt,senderId:m.senderId,receiverId:m.receiverId};}
+  async function loadThread(peer){const id=clean(peer?.id||peer?.peerId||peer);if(!id)return null;const data=await request('/api/dm/'+encodeURIComponent(id));const user=peer?.name?peer:(friendsCache.find(x=>x.id===id)||await getPublicProfile(id).catch(()=>({id,name:id})));const thread={id,user:{id,name:user.name,avatar:user.avatar||'',bio:user.bio||'',status:user.status||'Offline'},messages:(data.messages||[]).map(m=>mapDmMessage(m,id)),updatedAt:Date.now(),unread:0};state.dmCache.set(id,thread);return thread;}
+  async function listThreads(){if(!state.token)return[];const data=await request('/api/dm/threads');const result=[];for(const t of data.threads||[]){const peer=mapPublicUser(t.peer,'friend');if(!peer)continue;let thread=state.dmCache.get(peer.id);if(!thread||Number(t.unread)>0){thread=await loadThread(peer).catch(()=>null);}if(!thread)thread={id:peer.id,user:{id:peer.id,name:peer.name,avatar:peer.avatar,bio:peer.bio,status:peer.status},messages:[],updatedAt:Date.parse(t.latest?.createdAt)||Date.now(),unread:Number(t.unread||0)};thread.unread=Number(t.unread||0);thread.updatedAt=Date.parse(t.latest?.createdAt)||thread.updatedAt;result.push({...thread,user:{...thread.user},messages:thread.messages.map(x=>({...x}))});}return result.sort((a,b)=>b.updatedAt-a.updatedAt);}
+  async function refreshDm(){return listThreads();}
+  async function getThread(id){return loadThread(id);}
+  async function sendDm(id,text){const peerId=clean(id),messageText=clean(text);if(!messageText)throw new Error('Mensagem vazia.');const data=await request('/api/dm/'+encodeURIComponent(peerId),{method:'POST',body:{text:messageText}});await loadThread(peerId).catch(()=>{});emit('dm',{type:'outgoing',peerId});return mapDmMessage(data.message,peerId);}
+  async function markRead(id){const peerId=clean(id);await request('/api/dm/'+encodeURIComponent(peerId)+'/read',{method:'POST'});const thread=state.dmCache.get(peerId);if(thread)thread.unread=0;emit('dm',{type:'read',peerId});return true;}
+
+  async function listRoomInvites(){if(!state.token)return[];const data=await request('/api/room-invites');state.roomInvites=(data.invites||[]).map(inv=>({id:inv.id,type:'room-invite',senderId:inv.sender?.id,senderProfile:{name:inv.sender?.displayName||inv.sender?.name,avatar:inv.sender?.avatar,bio:inv.sender?.bio,status:inv.sender?.status},payload:{room:inv.roomId,roomName:inv.roomName},createdAt:Date.parse(inv.createdAt)||Date.now(),expiresAt:inv.expiresAt}));return state.roomInvites.map(x=>({...x,payload:{...x.payload},senderProfile:{...x.senderProfile}}));}
+  async function sendRoomInvite(friendId){const current=roomRegistry.room?.getState?.()||{};if(!current.connected||current.role!=='host')throw new Error('Somente o dono da sala pode convidar amigos.');return request('/api/room-invites',{method:'POST',body:{receiverId:clean(friendId),roomId:current.roomId,roomName:current.roomName}});}
+  async function respondRoomInvite(id,decision){const action=decision==='accept'?'accept':'reject';const data=await request('/api/room-invites/'+encodeURIComponent(clean(id))+'/'+action,{method:'POST'});await listRoomInvites();emit('roomInvite',{type:'updated'});return data;}
+  async function sendSocialEvent(receiverId,type,payload){return request('/api/social-events',{method:'POST',body:{receiverId:clean(receiverId),type,payload}});}
+  async function listSocialEvents(types=[]){const q=(types||[]).join(',');const data=await request('/api/social-events'+(q?'?types='+encodeURIComponent(q):''));return data.events||[];}
+  async function ackSocialEvents(ids){return request('/api/social-events/ack',{method:'POST',body:{ids}});}
+
+  /* ESTUDEX_V193_HOTFIX26_RECENT_ROOM_AUTH_GATE */
+  async function listSavedRooms(){if(!state.token)return[];const data=await request('/api/saved-rooms');const base=state.base||await resolveBase();return(data.rooms||[]).map(r=>({room:r.room,name:r.name,role:r.role==='host'?'host':'member',hostId:r.hostId||'',hostEndpoint:base,online:true,active:true,updatedAt:Date.parse(r.updatedAt)||Date.now(),createdAt:Date.parse(r.createdAt)||Date.now()}));}
+  async function saveCurrentRoom(){const local=await roomRegistry.rooms?.saveCurrent?.();if(!state.token)return local;const current=roomRegistry.room?.getState?.()||{};if(!current.roomId)return local;await request('/api/saved-rooms/'+encodeURIComponent(current.roomId),{method:'PUT',body:{name:current.roomName,role:current.role==='host'?'host':'member',hostId:current.hostId||''}}).catch(()=>{});return local;}
+  async function deleteSavedRoom(value){const room=clean(value?.room||value).toUpperCase();if(state.token&&room)await request('/api/saved-rooms/'+encodeURIComponent(room),{method:'DELETE'}).catch(()=>{});return roomRegistry.rooms?.deleteSaved?.(value);}
+
+  function disconnectSocket(){if(state.socketRetry){clearTimeout(state.socketRetry);state.socketRetry=null;}const ws=state.socket;state.socket=null;if(ws){try{ws.onclose=null;ws.close();}catch{}}}
+  function connectSocket(){
+    disconnectSocket();if(!state.token||!state.base)return;
+    const url=state.base.replace(/^http:/i,'ws:').replace(/^https:/i,'wss:')+'/ws';
+    try{
+      const ws=new WebSocket(url);state.socket=ws;
+      ws.onopen=()=>{try{ws.send(JSON.stringify({type:'auth',sessionToken:state.token}));}catch{}};
+      ws.onmessage=event=>{let msg;try{msg=JSON.parse(event.data);}catch{return;}handleSocket(msg);};
+      ws.onclose=()=>{if(state.socket===ws)state.socket=null;if(state.token)state.socketRetry=setTimeout(connectSocket,1800);};
+      ws.onerror=()=>{};
+    }catch{state.socketRetry=setTimeout(connectSocket,2200);}
+  }
+  function handleSocket(msg){
+    const type=clean(msg?.type);
+    if(type==='auth-ok'){if(msg.user)setUser(msg.user);return;}
+    if(type==='auth-error'){if(msg.code==='invalid_session')logout().catch(()=>{});return;}
+    if(type==='presence'||type.startsWith('friend-')||type.startsWith('friendship-')){Promise.allSettled([refreshFriends(),refreshPending(),refreshBlocked()]).then(()=>emit('social',{type}));return;}
+    if(type==='dm-message'){const peerId=clean(msg?.message?.senderId);if(peerId)loadThread(peerId).catch(()=>{}).finally(()=>emit('dm',{type:'incoming',peerId}));return;}
+    if(type==='room-invite-created'||type==='room-invite-updated'){listRoomInvites().catch(()=>{}).finally(()=>emit('roomInvite',{type}));return;}
+    if(type==='social-event'){root.dispatchEvent?.(new CustomEvent('estudex:cloud-social-event',{detail:msg.event||{}}));return;}
+  }
+
+  const cloudProfile=Object.freeze({get:getProfile,save:saveProfile,onChange:fn=>on('profile',fn)});
+  const cloudRadmin=Object.freeze({getState:()=>({adapter:false,connected:true,linkState:'cloud',radminIp:'',endpoint:state.base||'',peers:0,peerNames:[],checkedAt:Date.now(),error:''}),refresh:async()=>({adapter:false,connected:true,linkState:'cloud',endpoint:state.base||await resolveBase()}),listPeers:async()=>[],ensureReady:async()=>({ok:true,cloud:true,endpoint:state.base||await resolveBase()}),onChange:()=>()=>{}});
+  const cloudSocial=Object.freeze({listFriends,listPending,listBlocked,sendFriendRequest,acceptFriendRequest,dismissPending,removeFriend,block,unblock,getPublicProfile,onChange:fn=>on('social',fn)});
+  const cloudDm=Object.freeze({listThreads,getThread,send:sendDm,markRead,onChange:fn=>on('dm',fn)});
+  const cloudRooms=Object.freeze({listLan:async()=>[],listSaved:listSavedRooms,saveCurrent:saveCurrentRoom,deleteSaved:deleteSavedRoom});
+  const cloudRoom=Object.freeze({sendInvite:sendRoomInvite});
+  root.__estudexCleanroomAdapters=Object.freeze({...previous,profile:cloudProfile,radmin:cloudRadmin,social:cloudSocial,dm:cloudDm,rooms:cloudRooms,room:cloudRoom});
+
+  function installStyle(){if(document.getElementById('estudexCloudSocialStyleV1926'))return;const style=document.createElement('style');style.id='estudexCloudSocialStyleV1926';style.textContent=`
+    .cloud-auth-layer{position:fixed;inset:0;z-index:100000;background:radial-gradient(circle at 50% 20%,rgba(113,41,194,.24),transparent 42%),#030713;display:grid;place-items:center;padding:24px}.cloud-auth-layer.hidden{display:none}.cloud-auth-card{width:min(520px,calc(100vw - 40px));border:1px solid rgba(163,113,255,.22);border-radius:26px;background:linear-gradient(180deg,rgba(10,19,42,.97),rgba(5,11,26,.98));box-shadow:0 35px 90px #0009;padding:28px}.cloud-auth-brand{display:flex;align-items:center;gap:12px;margin-bottom:22px}.cloud-auth-brand img{width:42px;height:42px;border-radius:12px}.cloud-auth-brand strong{font-size:22px}.cloud-auth-card h1{margin:0 0 7px;font-size:26px}.cloud-auth-card>p{margin:0 0 20px;color:#93a5c2}.cloud-auth-tabs{display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:8px;margin-bottom:18px}.cloud-auth-tabs button,.cloud-auth-submit,.cloud-account-action{min-height:43px;border-radius:11px;border:1px solid rgba(152,125,255,.2);background:#0a1730;color:#dfe9ff;font-weight:700;cursor:pointer}.cloud-auth-tabs button.active,.cloud-auth-submit{background:linear-gradient(135deg,var(--theme-color,#8f18d8),#6237df);color:#fff}.cloud-auth-form{display:grid;gap:11px}.cloud-auth-form.hidden{display:none}.cloud-auth-form label{display:grid;gap:6px;color:#9eb0cb;font-size:12px}.cloud-auth-form input{height:44px;border:1px solid rgba(145,169,216,.18);border-radius:11px;background:#061225;color:#fff;padding:0 12px;outline:0}.cloud-auth-error{min-height:18px;color:#ff7686;font-size:12px}.cloud-auth-helper{display:flex;justify-content:space-between;gap:10px;align-items:center;color:#8497b3;font-size:12px}.cloud-auth-link{border:0;background:transparent;color:#b38cff;cursor:pointer;padding:0}.cloud-search-status{color:#8fa1bc;font-size:12px;padding:10px 2px}.cloud-account-card{display:grid;gap:13px}.cloud-account-id{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid rgba(145,169,216,.12);border-radius:12px;background:#071426}.cloud-account-avatar{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:var(--theme-color,#8f18d8);overflow:hidden;font-weight:800}.cloud-account-avatar img{width:100%;height:100%;object-fit:cover}.cloud-account-copy{display:grid;gap:3px}.cloud-account-copy span{color:#879ab6;font-size:12px}.cloud-account-actions{display:flex;gap:9px;flex-wrap:wrap}.cloud-account-action.danger{border-color:#7c3040;color:#ff9aaa}.radmin-panel,#radminGuideModal{display:none!important}
+  `;document.head.appendChild(style);}
+
+  function ensureAuthOverlay(){installStyle();let layer=document.getElementById('cloudAuthLayerV1926');if(layer)return layer;layer=document.createElement('div');layer.id='cloudAuthLayerV1926';layer.className='cloud-auth-layer hidden';layer.innerHTML=`<div class="cloud-auth-card"><div class="cloud-auth-brand"><img src="/assets/avatars/logo.png" alt=""><strong>ESTUDEX</strong></div><h1 id="cloudAuthTitle">Entrar no ESTUDEX</h1><p id="cloudAuthSubtitle">Sua identidade agora acompanha você pela internet.</p><div class="cloud-auth-tabs"><button type="button" data-cloud-auth-tab="login">Entrar</button><button type="button" data-cloud-auth-tab="register">Criar conta</button><button type="button" data-cloud-auth-tab="guest">Visitante</button></div><form class="cloud-auth-form" id="cloudLoginForm"><label>Usuário ou e-mail<input name="login" autocomplete="username" required></label><label>Senha<input name="password" type="password" autocomplete="current-password" required></label><button class="cloud-auth-submit" type="submit">Entrar</button><div class="cloud-auth-helper"><button class="cloud-auth-link" type="button" id="cloudForgotPassword">Esqueci minha senha</button><span>Conta persistente</span></div></form><form class="cloud-auth-form hidden" id="cloudRegisterForm"><label>Nome de exibição<input name="displayName" maxlength="32" required></label><label>@usuário<input name="username" maxlength="24" required></label><label>E-mail<input name="email" type="email" autocomplete="email" required></label><label>Senha<input name="password" type="password" minlength="8" autocomplete="new-password" required></label><button class="cloud-auth-submit" type="submit">Criar conta</button></form><form class="cloud-auth-form hidden" id="cloudGuestForm"><label>Nome do visitante<input name="displayName" maxlength="32" value="Guest"></label><button class="cloud-auth-submit" type="submit">Continuar como visitante</button><div class="cloud-auth-helper"><span>Seu Guest fica salvo neste PC e pode virar conta depois.</span></div></form><div class="cloud-auth-error" id="cloudAuthError"></div></div>`;document.body.appendChild(layer);
+    layer.addEventListener('click',event=>{const tab=event.target.closest('[data-cloud-auth-tab]');if(tab)showAuthOverlay(tab.dataset.cloudAuthTab);});
+    layer.querySelector('#cloudLoginForm').addEventListener('submit',async event=>{event.preventDefault();const fd=new FormData(event.currentTarget);await authAction(()=>login(fd.get('login'),fd.get('password')));});
+    layer.querySelector('#cloudRegisterForm').addEventListener('submit',async event=>{event.preventDefault();const fd=new FormData(event.currentTarget);await authAction(()=>register({displayName:fd.get('displayName'),username:fd.get('username'),email:fd.get('email'),password:fd.get('password')}));});
+    layer.querySelector('#cloudGuestForm').addEventListener('submit',async event=>{event.preventDefault();const fd=new FormData(event.currentTarget);await authAction(()=>guest(fd.get('displayName')));});
+    layer.querySelector('#cloudForgotPassword').addEventListener('click',async()=>{const email=prompt('Digite o e-mail da sua conta ESTUDEX:');if(!email)return;try{await forgotPassword(email);setAuthError('Se esse e-mail estiver cadastrado, enviaremos as instruções de recuperação.',true);}catch(error){setAuthError(error.message);}});
+    return layer;
+  }
+  function setAuthError(message,ok=false){const el=document.getElementById('cloudAuthError');if(!el)return;el.textContent=clean(message);el.style.color=ok?'#62df98':'#ff7686';}
+  async function authAction(fn){setAuthError('');const layer=ensureAuthOverlay();layer.querySelectorAll('button').forEach(b=>b.disabled=true);try{await fn();}catch(error){setAuthError(error?.message||'Não foi possível entrar.');}finally{layer.querySelectorAll('button').forEach(b=>b.disabled=false);}}
+  function showAuthOverlay(mode='login'){const layer=ensureAuthOverlay();layer.classList.remove('hidden');const modes=['login','register','guest'];const key=modes.includes(mode)?mode:'login';layer.querySelectorAll('[data-cloud-auth-tab]').forEach(b=>b.classList.toggle('active',b.dataset.cloudAuthTab===key));layer.querySelector('#cloudLoginForm').classList.toggle('hidden',key!=='login');layer.querySelector('#cloudRegisterForm').classList.toggle('hidden',key!=='register');layer.querySelector('#cloudGuestForm').classList.toggle('hidden',key!=='guest');document.getElementById('cloudAuthTitle').textContent=key==='login'?'Entrar no ESTUDEX':key==='register'?'Criar sua conta':'Continuar como visitante';setAuthError('');}
+  function hideAuthOverlay(){ensureAuthOverlay().classList.add('hidden');}
+
+  function applyCloudIdentityToCanonical(){
+    if(!state.user)return;
+    const name=clean(state.user.displayName||state.user.name)||'Usuário';
+    try{localStorage.setItem('estudex-profile-username-v193',name);localStorage.setItem('estudex-test-username',name);localStorage.setItem('estudex-profile-ready-v193','1');localStorage.setItem('estudex-public-tag',clean(state.user.handle||state.user.username));}catch{}
+    try{if(typeof currentUser==='object'&&currentUser){currentUser.id=state.user.id;currentUser.username=name;currentUser.about=state.user.bio||'';currentUser.status=statusKey(state.user.status);currentUser.accountType=state.user.accountType;currentUser.handle=state.user.handle||state.user.username;}}
+    catch{}
+    try{if(typeof profileState==='object'){profileState.about=state.user.bio||'';profileState.status=statusKey(state.user.status);if(state.user.avatar)profileState.avatarDataUrl=state.user.avatar;}}
+    catch{}
+    try{setIdentityUI?.({...(currentUser||{}),id:state.user.id,username:name,about:state.user.bio||'',status:statusKey(state.user.status)});}catch{}
+  }
+
+  let searchTicket=0;
+  function installUiOverrides(){
+    // Remove every visible Radmin-only surface. Underlying legacy code is no longer used.
+    document.querySelectorAll('.radmin-panel,#radminGuideModal').forEach(el=>el.remove());
+    document.querySelectorAll('.social-hint-card').forEach(card=>{if(/radmin|mesma rede/i.test(card.textContent||''))card.remove();});
+    document.querySelectorAll('[data-spec-settings="radmin"],#specSettingsRadmin').forEach(el=>el.remove());
+    const addTitle=document.querySelector('#addFriendModal h2');if(addTitle)addTitle.textContent='Encontrar pessoas';
+    const addCopy=document.querySelector('#addFriendModal h2 + p');if(addCopy)addCopy.textContent='Busque pelo @usuário ou pelo nome de exibição.';
+    const addInput=document.getElementById('addFriendSearchInput');if(addInput)addInput.placeholder='Buscar por @usuário ou nome';
+
+    if(typeof renderFriendsPage==='function'){
+      const baseRender=renderFriendsPage;
+      renderFriendsPage=function cloudRenderFriends(){
+        const result=baseRender();
+        const panel=document.getElementById('friendsListPanel');if(panel&&!panel.querySelector('.friend-item-row:not(.empty)')){const empty=panel.querySelector('.friends-empty-state span');if(empty&&!friendsUIState?.search)empty.textContent='Use “Adicionar amigo” para encontrar pessoas pela internet.';}
+        document.querySelectorAll('#friendsListPanel [data-friend-menu]').forEach(menu=>{
+          const id=clean(menu.dataset.friendMenu);const item=(socialFriends||[]).find(x=>x.id===id||x.requestId===id);if(item?.relation==='pending'){
+            const buttons=menu.querySelectorAll('button[data-friend-action]');
+            if(item.pendingDirection==='outgoing'){
+              if(buttons[0]){buttons[0].dataset.friendAction='reject';buttons[0].dataset.friendId=item.requestId||item.id;buttons[0].textContent='Cancelar solicitação';buttons[0].classList.add('danger');}
+              if(buttons[1])buttons[1].remove();
+            } else {
+              if(buttons[0]){buttons[0].dataset.friendAction='accept';buttons[0].dataset.friendId=item.requestId||item.id;buttons[0].textContent='Aceitar';buttons[0].classList.remove('danger');}
+              if(buttons[1]){buttons[1].dataset.friendAction='reject';buttons[1].dataset.friendId=item.requestId||item.id;buttons[1].textContent='Recusar';buttons[1].classList.add('danger');}
+            }
+          }
+        });
+        return result;
+      };
+    }
+
+    renderAddFriendModal=async function cloudRenderAddFriendModal(){
+      const results=document.getElementById('addFriendResults');if(!results)return;
+      const q=clean(friendsUIState?.addSearch||'');const ticket=++searchTicket;
+      if(q.length<2){results.innerHTML='<div class="cloud-search-status">Digite pelo menos 2 caracteres para procurar usuários.</div>';return;}
+      results.innerHTML='<div class="cloud-search-status">Buscando usuários…</div>';
+      try{
+        const users=await searchUsers(q);if(ticket!==searchTicket)return;
+        if(!users.length){results.innerHTML='<div class="cloud-search-status">Nenhum usuário encontrado.</div>';return;}
+        results.innerHTML=users.map(user=>{
+          const relation=user.relationship||'none';
+          const disabled=relation!=='none';
+          const label=relation==='friend'?'Já é amigo':relation==='outgoing_pending'?'Solicitação enviada':relation==='incoming_pending'?'Solicitação recebida':'Adicionar amigo';
+          const avatar=user.avatar?'<span class="friend-avatar-large"><img src="'+escapeHTML(user.avatar)+'" alt=""></span>':'<span class="friend-avatar-large"><span class="dynamic-avatar">'+escapeHTML(initials(user.name))+'</span></span>';
+          return '<div class="network-user-card">'+avatar+'<div class="friend-main-copy"><strong>'+escapeHTML(user.name)+'</strong><div class="friend-secondary-line"><span>@'+escapeHTML(user.username)+'</span> · <span>'+escapeHTML(user.online?'Online':'Offline')+'</span></div><small>'+escapeHTML(user.about||'')+'</small></div><div class="network-user-actions"><button class="social-primary-button" data-invite-detected="'+escapeHTML(user.id)+'" type="button" '+(disabled?'disabled':'')+'>'+escapeHTML(label)+'</button></div></div>';
+        }).join('');
+      }catch(error){if(ticket===searchTicket)results.innerHTML='<div class="cloud-search-status">'+escapeHTML(error?.message||'Falha na busca.')+'</div>';}
+    };
+
+    addDetectedUserAsFriend=async function cloudAddFriend(id){const user=state.search.find(x=>x.id===clean(id));try{await sendFriendRequest(user||id);showToast?.('Solicitação enviada.');await renderAddFriendModal();emit('social',{type:'friend-request'});}catch(error){showToast?.(error?.message||'Não foi possível enviar a solicitação.');}};
+
+    handleFriendAction=async function cloudFriendAction(action,id){
+      const key=clean(id);const entry=(socialFriends||[]).find(x=>x.id===key||x.requestId===key);const kind=clean(action).toLowerCase();
+      try{
+        if((kind==='accept'||kind==='approve')&&entry?.relation==='pending')await acceptFriendRequest(entry.requestId||key);
+        else if((kind==='reject'||kind==='decline')&&entry?.relation==='pending')await dismissPending(entry.requestId||key);
+        else if(kind==='block')await block(entry?.id||key);
+        else if(kind==='unblock')await unblock(entry?.id||key);
+        else if(kind==='remove')await removeFriend(entry?.id||key);
+        else return;
+        friendsUIState.menuFriendId=null;emit('social',{type:'changed'});showToast?.(kind==='accept'?'Pedido aceito.':kind==='reject'?'Solicitação atualizada.':kind==='block'?'Usuário bloqueado.':kind==='unblock'?'Usuário desbloqueado.':'Amigo removido.');
+      }catch(error){showToast?.(error?.message||'Não foi possível concluir a ação.');}
+    };
+
+    sendInboxMessage=async function cloudSendInboxMessage(){const input=document.getElementById('inboxMessageInput');const thread=inboxState?.activePeerKey?inboxThreads[inboxState.activePeerKey]:null;if(!input||!thread)return;const text=clean(input.value);if(!text)return;input.value='';try{await sendDm(thread.username||thread.userId||thread.peerId,text);emit('dm',{type:'outgoing'});}catch(error){showToast?.(error?.message||'Não foi possível enviar a mensagem.');}};
+
+    const settingsNav=document.getElementById('specSettingsNav');
+    if(settingsNav&&!settingsNav.querySelector('[data-spec-settings="account"]')){
+      const button=document.createElement('button');button.type='button';button.dataset.specSettings='account';button.textContent='Conta';settingsNav.appendChild(button);
+      const grid=document.querySelector('.appearance-grid');if(grid){const panel=document.createElement('article');panel.id='specSettingsAccount';panel.className='settings-card spec-settings-panel hidden';grid.appendChild(panel);button.addEventListener('click',()=>{document.querySelectorAll('.spec-settings-panel').forEach(el=>el.classList.add('hidden'));document.querySelectorAll('#specSettingsNav button').forEach(el=>el.classList.remove('active'));button.classList.add('active');panel.classList.remove('hidden');updateAccountPanel();});}
+    }
+    updateAccountPanel();
+  }
+
+  function updateAccountPanel(){const panel=document.getElementById('specSettingsAccount');if(!panel)return;const u=state.user;if(!u){panel.innerHTML='<div class="settings-card-title"><h2>Conta</h2><p>Entre para sincronizar sua identidade.</p></div><button class="cloud-account-action" id="cloudSettingsLogin">Entrar</button>';panel.querySelector('#cloudSettingsLogin')?.addEventListener('click',()=>showAuthOverlay('login'));return;}const name=clean(u.displayName||u.name)||'Usuário',handle=clean(u.handle||u.username);panel.innerHTML='<div class="settings-card-title"><h2>Conta</h2><p>Identidade online do ESTUDEX.</p></div><div class="cloud-account-card"><div class="cloud-account-id"><span class="cloud-account-avatar">'+(u.avatar?'<img src="'+escapeHTML(u.avatar)+'" alt="">':escapeHTML(initials(name)))+'</span><div class="cloud-account-copy"><strong>'+escapeHTML(name)+'</strong><span>@'+escapeHTML(handle)+'</span><span>'+(u.accountType==='registered'?'Conta registrada':'Visitante persistente')+'</span></div></div><div class="cloud-account-actions">'+(u.accountType==='guest'?'<button class="cloud-account-action" id="cloudUpgradeGuest">Transformar em conta</button>':'')+'<button class="cloud-account-action danger" id="cloudLogout">Sair</button></div></div>';panel.querySelector('#cloudLogout')?.addEventListener('click',()=>logout().catch(()=>{}));panel.querySelector('#cloudUpgradeGuest')?.addEventListener('click',async()=>{const username=prompt('Escolha seu @usuário:');if(!username)return;const email=prompt('Digite seu e-mail:');if(!email)return;const password=prompt('Crie uma senha com pelo menos 8 caracteres:');if(!password)return;try{await upgradeGuest({username,email,password});showToast?.('Guest convertido em conta sem perder seus dados.');updateAccountPanel();}catch(error){showToast?.(error?.message||'Não foi possível converter a conta.');}});}
+
+  async function bootstrap(){
+    ensureAuthOverlay();const restored=await restoreSession();
+    if(restored){hideAuthOverlay();await afterAuth();}
+    else showAuthOverlay('login');
+    state.ready=true;
+  }
+
+  root.EstudexCloudSocial=Object.freeze({version:'1.9.26',getBase:()=>state.base,getUser:()=>state.user?{...state.user}:null,getCachedFriends:()=>friendsCache.map(x=>({...x})),request,login,register,guest,upgradeGuest,forgotPassword,logout,searchUsers,listRoomInvites,sendRoomInvite,respondRoomInvite,sendSocialEvent,listSocialEvents,ackSocialEvents,refreshFriends,refreshPending,refreshDm,listFriends,listPending,listBlocked,onAuth:fn=>on('auth',fn)});
+  installStyle();setTimeout(installUiOverrides,0);bootstrap().catch(error=>{console.error('[ESTUDEX H22 cloud social]',error);showAuthOverlay('login');setAuthError(error?.message||'Falha ao conectar ao backend ESTUDEX.');});
+})();
+
+/* ESTUDEX_V193_HOTFIX23_SESSION_RESTORE */
+(function installHotfix23SessionRestoreGuard(){
+  if (typeof window === 'undefined') return;
+  if (typeof window.refreshRoomInvites === 'function') return;
+
+  window.refreshRoomInvites = async function refreshRoomInvites(){
+    try {
+      const api = window.EstudexCloudSocial;
+      if (api && typeof api.listRoomInvites === 'function') {
+        const result = await api.listRoomInvites();
+        const invites = Array.isArray(result) ? result : (Array.isArray(result?.invites) ? result.invites : []);
+        try {
+          window.dispatchEvent(new CustomEvent('estudex:room-invites-refreshed', { detail: { invites, raw: result } }));
+        } catch (_) {}
+        return invites;
+      }
+    } catch (err) {
+      console.warn('[ESTUDEX H23] room invite refresh failed during session restore', err);
+    }
+    return [];
+  };
+})();
+
+/* ESTUDEX_V193_HOTFIX24_GUEST_UPGRADE_PROFILE */
+(function installHotfix24GuestUpgradeProfile(){
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+
+  const q = selector => document.querySelector(selector);
+  const cloud = () => window.EstudexCloudSocial;
+  const currentUser = () => { try { return cloud()?.getUser?.() || null; } catch (_) { return null; } };
+
+  function installStyle(){
+    if (q('#estudexHotfix24Style')) return;
+    const style = document.createElement('style');
+    style.id = 'estudexHotfix24Style';
+    style.textContent = `
+      #guestUpgradeProfileCard{margin:16px 0 2px;padding:14px 15px;border:1px solid color-mix(in srgb,var(--theme-color,#6d45d8) 38%,rgba(132,162,202,.18));border-radius:12px;background:color-mix(in srgb,var(--theme-color,#6d45d8) 10%,#091624);display:flex;align-items:center;justify-content:space-between;gap:16px}
+      #guestUpgradeProfileCard.hidden{display:none!important}.guest-upgrade-profile-copy{display:grid;gap:4px;min-width:0}.guest-upgrade-profile-copy strong{color:#f4f7fb;font-size:13px}.guest-upgrade-profile-copy span{color:#92a4bc;font-size:10px;line-height:1.45}.guest-upgrade-profile-card .secondary-button{flex:0 0 auto;min-height:38px;white-space:nowrap}
+      #guestUpgradeModal .guest-upgrade-modal{width:min(500px,calc(100vw - 34px));max-height:92vh;overflow:auto;padding:22px;text-align:left}.guest-upgrade-fields{display:grid;gap:6px}.guest-upgrade-fields .profile-form-label{margin:9px 0 2px}.guest-upgrade-fields .profile-form-input{width:100%;box-sizing:border-box}.guest-upgrade-field-note{display:block;margin:-1px 0 2px;color:#72859f;font-size:9px}.guest-upgrade-error{min-height:18px;margin:11px 0 0;color:#ff7787;font-size:10px}.guest-upgrade-keep-note{margin:8px 0 0;padding:10px 12px;border:1px solid rgba(132,162,202,.14);border-radius:9px;background:#091624;color:#8fa2ba;font-size:9.5px;line-height:1.45}.guest-upgrade-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:14px}.guest-upgrade-actions button{min-width:120px}
+      @media(max-width:620px){#guestUpgradeProfileCard{align-items:stretch;flex-direction:column}.guest-upgrade-profile-card .secondary-button{width:100%}.guest-upgrade-actions{flex-direction:column-reverse}.guest-upgrade-actions button{width:100%}}
+    `;
+    document.head.appendChild(style);
+  }
+
+  function setError(message){
+    const node = q('#guestUpgradeError');
+    if (node) node.textContent = String(message || '');
+  }
+
+  function syncGuestUi(){
+    const user = currentUser();
+    const card = q('#guestUpgradeProfileCard');
+    if (card) card.classList.toggle('hidden', !user || user.accountType !== 'guest');
+    if (user?.accountType === 'registered') q('#guestUpgradeModal')?.classList.add('hidden');
+  }
+
+  function openUpgrade(){
+    const user = currentUser();
+    if (!user || user.accountType !== 'guest') return;
+    const modal = q('#guestUpgradeModal');
+    if (!modal) return;
+    const handle = String(user.handle || user.username || '').replace(/^guest_/i,'');
+    const username = q('#guestUpgradeUsername');
+    if (username && !username.value) username.value = handle && !/^guest/i.test(handle) ? handle : '';
+    if (q('#guestUpgradePassword')) q('#guestUpgradePassword').value = '';
+    if (q('#guestUpgradePasswordConfirm')) q('#guestUpgradePasswordConfirm').value = '';
+    setError('');
+    modal.classList.remove('hidden');
+    setTimeout(() => q('#guestUpgradeUsername')?.focus(), 0);
+  }
+
+  function closeUpgrade(){ q('#guestUpgradeModal')?.classList.add('hidden'); setError(''); }
+
+  async function submitUpgrade(){
+    const api = cloud();
+    const userBefore = currentUser();
+    if (!api?.upgradeGuest || !userBefore || userBefore.accountType !== 'guest') { setError('Esta identidade não é mais um visitante.'); syncGuestUi(); return; }
+    const username = String(q('#guestUpgradeUsername')?.value || '').trim().replace(/^@+/,'').toLowerCase();
+    const email = String(q('#guestUpgradeEmail')?.value || '').trim().toLowerCase();
+    const password = String(q('#guestUpgradePassword')?.value || '');
+    const confirm = String(q('#guestUpgradePasswordConfirm')?.value || '');
+    if (!/^[a-z0-9_.-]{3,24}$/.test(username)) { setError('O @usuário precisa ter de 3 a 24 caracteres e usar apenas letras, números, ponto, traço ou underline.'); return; }
+    if (!/^\S+@\S+\.\S+$/.test(email)) { setError('Informe um e-mail válido.'); return; }
+    if (password.length < 8) { setError('A senha precisa ter pelo menos 8 caracteres.'); return; }
+    if (password !== confirm) { setError('As senhas não coincidem.'); return; }
+    const button = q('#confirmGuestUpgrade');
+    if (button) { button.disabled = true; button.textContent = 'Criando conta…'; }
+    setError('');
+    try {
+      const upgraded = await api.upgradeGuest({ username, email, password });
+      try { localStorage.setItem('estudex-public-tag', String(upgraded?.handle || upgraded?.username || username)); } catch (_) {}
+      const tagInput = q('#specEditTag');
+      if (tagInput) tagInput.value = String(upgraded?.handle || upgraded?.username || username);
+      syncGuestUi();
+      closeUpgrade();
+      try { window.showToast?.('Conta criada. Seu perfil e seus dados foram mantidos.'); } catch (_) {}
+      try { window.dispatchEvent(new CustomEvent('estudex:guest-upgraded', { detail: { user: upgraded, previousUserId: userBefore.id } })); } catch (_) {}
+    } catch (error) {
+      setError(error?.message || 'Não foi possível transformar este perfil em conta.');
+    } finally {
+      if (button) { button.disabled = false; button.textContent = 'Criar conta'; }
+    }
+  }
+
+  function wire(){
+    installStyle();
+    const open = q('#profileUpgradeGuest');
+    if (open && !open.dataset.h24Bound) { open.dataset.h24Bound = '1'; open.addEventListener('click', openUpgrade); }
+    const close = q('#closeGuestUpgradeModal');
+    if (close && !close.dataset.h24Bound) { close.dataset.h24Bound = '1'; close.addEventListener('click', closeUpgrade); }
+    const cancel = q('#cancelGuestUpgrade');
+    if (cancel && !cancel.dataset.h24Bound) { cancel.dataset.h24Bound = '1'; cancel.addEventListener('click', closeUpgrade); }
+    const confirm = q('#confirmGuestUpgrade');
+    if (confirm && !confirm.dataset.h24Bound) { confirm.dataset.h24Bound = '1'; confirm.addEventListener('click', submitUpgrade); }
+    const modal = q('#guestUpgradeModal');
+    if (modal && !modal.dataset.h24BackdropBound) { modal.dataset.h24BackdropBound = '1'; modal.addEventListener('click', event => { if (event.target === modal) closeUpgrade(); }); }
+    syncGuestUi();
+    try { cloud()?.onAuth?.(syncGuestUi); } catch (_) {}
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire, { once:true });
+  else setTimeout(wire, 0);
+})();
+
+/* ESTUDEX_V193_HOTFIX25_ACCOUNT_LOGIN */
+
+/* ESTUDEX_V193_HOTFIX26_ROOM_UX */
