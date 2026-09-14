@@ -1,0 +1,40 @@
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const root = path.resolve(process.argv[2] || process.cwd());
+const read = rel => fs.readFileSync(path.join(root, rel), 'utf8');
+const sha = rel => crypto.createHash('sha256').update(fs.readFileSync(path.join(root, rel))).digest('hex');
+const must = (condition, message) => { if (!condition) throw new Error('ESTUDEX Hotfix 27 contract: ' + message); };
+
+const pkg = JSON.parse(read('package.json'));
+const forge = read('forge.config.js');
+const engine = read('public/estudex-engine.js');
+const socket = read('public/js/estudex-engine-socket-compat.js');
+const cloud = read('public/js/estudex-v193-cloud-social-v1926.js');
+const h26runtime = read('public/js/estudex-v193-hotfix26-room-qol.js');
+const manifest = JSON.parse(read('estudex-hotfix27-manifest.json'));
+
+must(pkg.version === '1.9.31', 'package version');
+must(/version:\s*["']1\.9\.31["']/.test(forge), 'forge version');
+must(engine.includes('ESTUDEX_V193_HOTFIX27_CURSOR_DEDUPE'), 'cursor-dedupe marker missing');
+must(engine.includes("cursor:'never'"), 'cursor-free capture constraint missing');
+must(engine.includes('const stream = await originalGetDisplayMedia(captureConstraints);'), 'getDisplayMedia does not use rewritten constraints');
+must(engine.includes('ESTUDEX_V193_HOTFIX21_SYSTEM_AUDIO'), 'system audio preservation marker missing');
+must(socket.includes('ESTUDEX_V193_HOTFIX27_CLOUD_ROOM_BOOTSTRAP_GATE'), 'cloud room bootstrap gate missing');
+must(socket.includes('const cloudRoomsReady=Boolean(cloudUser?.id);'), 'cloud room readiness guard missing');
+must(socket.includes("'estudex:cloud-session-ready'"), 'socket cloud-ready refresh listener missing');
+must(cloud.includes('ESTUDEX_V193_HOTFIX26_RECENT_ROOM_AUTH_GATE'), 'H26 saved-room gate missing');
+must(cloud.includes('ESTUDEX_V193_HOTFIX27_CLOUD_SESSION_READY'), 'cloud session-ready signal missing');
+must(cloud.includes("new CustomEvent('estudex:cloud-session-ready'"), 'cloud session-ready event missing');
+must(h26runtime.includes("button.textContent='Encerrar transmissão'"), 'H26 stop-broadcast control missing');
+must(manifest.baseTag === 'v1.9.30-hotfix26', 'manifest base tag');
+must(manifest.technicalVersion === '1.9.31', 'manifest technical version');
+must(manifest.hotfix === 27, 'manifest hotfix number');
+must(manifest.backend?.serverVersion === '0.3.2', 'backend version');
+must(manifest.capture?.cursorPolicy === 'never', 'cursor policy manifest');
+must(manifest.capture?.duplicateCursorMitigation === true, 'cursor mitigation flag');
+must(manifest.roomUx?.cloudRoomBootstrapAuthoritative === true, 'cloud room bootstrap flag');
+must(sha('public/js/home.js') === manifest.canonicalHome.js, 'canonical V10.10 home.js changed');
+must(sha('public/css/home.css') === manifest.canonicalHome.css, 'canonical V10.10 home.css changed');
+
+console.log('ESTUDEX Hotfix 27 capture/recent-room contract passed.');
