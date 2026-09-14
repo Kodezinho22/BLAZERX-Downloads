@@ -27,14 +27,16 @@ jobs:
           & 7z x $pkg.FullName '-onupkg' -y | Out-Null
           $asar=Get-ChildItem nupkg -Recurse -Filter app.asar | Select-Object -First 1
           npx --yes @electron/asar extract $asar.FullName app
-          Copy-Item app/public/estudex-engine.js _inspection/h26/estudex-engine.js
-          Copy-Item app/public/js/estudex-engine-socket-compat.js _inspection/h26/estudex-engine-socket-compat.js
-          Copy-Item app/public/js/estudex-v193-cloud-social-v1926.js _inspection/h26/estudex-v193-cloud-social-v1926.js
-          Copy-Item app/main.js _inspection/h26/main.js
-          Copy-Item app/package.json _inspection/h26/package.json
-          Copy-Item app/forge.config.js _inspection/h26/forge.config.js
+          Copy-Item app/public/estudex-engine.js _inspection/h26/estudex-engine.js -Force
+          Copy-Item app/public/js/estudex-engine-socket-compat.js _inspection/h26/estudex-engine-socket-compat.js -Force
+          Copy-Item app/public/js/estudex-v193-cloud-social-v1926.js _inspection/h26/estudex-v193-cloud-social-v1926.js -Force
+          Copy-Item app/public/js/home.js _inspection/h26/home.js -Force
+          Copy-Item app/public/index.html _inspection/h26/index.html -Force
+          Copy-Item app/main.js _inspection/h26/main.js -Force
+          Copy-Item app/package.json _inspection/h26/package.json -Force
+          Copy-Item app/forge.config.js _inspection/h26/forge.config.js -Force
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add _inspection/h26
-          git commit -m 'chore: save exact H26 target files'
+          git commit -m 'chore: add exact H26 home and index targets'
           git push
