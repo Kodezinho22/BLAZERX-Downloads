@@ -1,0 +1,35 @@
+name: Inspect H24 cloud session bridge
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/inspect-hotfix24-cloud.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Recover H24 cloud script
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download v1.9.28-hotfix24 --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          New-Item -ItemType Directory -Force -Path setup,nupkg,app | Out-Null
+          & 7z x 'ESTUDEX-Setup.exe' '-osetup' -y | Out-Null
+          $pkg = Get-ChildItem setup -Recurse -Filter 'blazerx-1.9.28-full.nupkg' | Select-Object -First 1
+          & 7z x $pkg.FullName '-onupkg' -y | Out-Null
+          $asar = Get-ChildItem nupkg -Recurse -Filter 'app.asar' | Select-Object -First 1
+          npx --yes @electron/asar extract $asar.FullName app
+          $file = 'app/public/js/estudex-v193-cloud-social-v1926.js'
+          Select-String -Path $file -Pattern 'sessionToken|setToken|saveSession|safeStorage|secure|TOKEN|localStorage' -AllMatches | ForEach-Object { $_.Line }
