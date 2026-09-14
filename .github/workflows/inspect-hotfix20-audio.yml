@@ -1,4 +1,4 @@
-# trigger 2
+# trigger 3
 name: Inspect Hotfix 20 audio path
 
 on:
@@ -39,8 +39,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $files=@('app/public/estudex-engine.js','app/public/app.js','app/main.js','app/preload.js')
-          $patterns=@('getDisplayMedia','desktopAudio','combinedStream','startShare','audioToggle','audioEnabled','systemAudio','loopback','ontrack','addTrack','replaceTrack','getAudioTracks','setDisplayMediaRequestHandler')
+          $files=@('app/public/estudex-engine.js','app/public/js/home.js','app/public/app.js','app/main.js','app/preload.js','app/package.json')
+          $patterns=@('getDisplayMedia','desktopAudio','combinedStream','startShare','audioToggle','audioEnabled','systemAudio','loopback','remote-stream','srcObject','muted','volume','ontrack','addTrack','replaceTrack','getAudioTracks','setDisplayMediaRequestHandler','electron')
           foreach($file in $files){
             if(-not (Test-Path $file)){continue}
             Write-Host "===== FILE $file ====="
@@ -48,7 +48,7 @@ jobs:
             for($i=0;$i -lt $lines.Count;$i++){
               foreach($p in $patterns){
                 if($lines[$i] -match [regex]::Escape($p)){
-                  $from=[Math]::Max(0,$i-8); $to=[Math]::Min($lines.Count-1,$i+18)
+                  $from=[Math]::Max(0,$i-7); $to=[Math]::Min($lines.Count-1,$i+14)
                   Write-Host "--- $p around line $($i+1) ---"
                   for($j=$from;$j -le $to;$j++){ Write-Host ("{0,6}: {1}" -f ($j+1),$lines[$j]) }
                   break
