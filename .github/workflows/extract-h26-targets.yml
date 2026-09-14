@@ -1,0 +1,40 @@
+name: Extract H26 targets
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/extract-h26-targets.yml']
+permissions:
+  contents: write
+jobs:
+  extract:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Extract exact H26 source
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release download v1.9.30-hotfix26 --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          New-Item -ItemType Directory -Force -Path setup,nupkg,app,_inspection/h26 | Out-Null
+          & 7z x ESTUDEX-Setup.exe '-osetup' -y | Out-Null
+          $pkg=Get-ChildItem setup -Recurse -Filter 'blazerx-1.9.30-full.nupkg' | Select-Object -First 1
+          & 7z x $pkg.FullName '-onupkg' -y | Out-Null
+          $asar=Get-ChildItem nupkg -Recurse -Filter app.asar | Select-Object -First 1
+          npx --yes @electron/asar extract $asar.FullName app
+          Copy-Item app/public/estudex-engine.js _inspection/h26/estudex-engine.js
+          Copy-Item app/public/js/estudex-engine-socket-compat.js _inspection/h26/estudex-engine-socket-compat.js
+          Copy-Item app/public/js/estudex-v193-cloud-social-v1926.js _inspection/h26/estudex-v193-cloud-social-v1926.js
+          Copy-Item app/main.js _inspection/h26/main.js
+          Copy-Item app/package.json _inspection/h26/package.json
+          Copy-Item app/forge.config.js _inspection/h26/forge.config.js
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add _inspection/h26
+          git commit -m 'chore: save exact H26 target files'
+          git push
