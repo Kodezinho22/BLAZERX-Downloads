@@ -1,0 +1,58 @@
+name: Inspect ESTUDEX H12 vs H18 LAN gates
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/inspect-estudex-h12-h18-gates.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Recover H12 and H18
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          function Recover([string]$tag,[string]$version,[string]$out) {
+            New-Item -ItemType Directory -Force -Path "$out-download","$out-setup","$out-nupkg",$out | Out-Null
+            gh release download $tag --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe' --dir "$out-download"
+            & 7z x "$out-download/ESTUDEX-Setup.exe" "-o$out-setup" -y | Out-Null
+            $pkg=Get-ChildItem "$out-setup" -Recurse -Filter "blazerx-$version-full.nupkg" | Select-Object -First 1
+            if(-not $pkg){throw "$tag nupkg not found"}
+            & 7z x $pkg.FullName "-o$out-nupkg" -y | Out-Null
+            $asar=Get-ChildItem "$out-nupkg" -Recurse -Filter app.asar | Select-Object -First 1
+            if(-not $asar){throw "$tag app.asar not found"}
+            npx --yes @electron/asar extract $asar.FullName $out
+          }
+          Recover 'v1.9.16-hotfix12' '1.9.16' 'h12'
+          Recover 'v1.9.22-hotfix18' '1.9.22' 'h18'
+      - name: Print presence gate definitions
+        shell: pwsh
+        run: |
+          @'
+          const fs=require('fs');
+          function around(s,term,before=1200,after=4200){const i=s.indexOf(term);console.log(`\n--- ${term} @ ${i} ---`);if(i>=0)console.log(s.slice(Math.max(0,i-before),Math.min(s.length,i+after)));}
+          for(const label of ['h12','h18']){
+            const s=fs.readFileSync(`${label}/server.js`,'utf8');
+            console.log(`\n========== ${label.toUpperCase()} ==========`);
+            around(s,'function estudexSocialPublicOnlineV190');
+            around(s,'const estudexSocialPublicOnlineV190');
+            around(s,'function isAppHeartbeatOnlineV122');
+            around(s,'const isAppHeartbeatOnlineV122');
+            around(s,'ESTUDEX_V193_HOTFIX13');
+            around(s,'HOTFIX13');
+          }
+          '@ | Set-Content inspect-gates.cjs -Encoding UTF8
+          node inspect-gates.cjs
