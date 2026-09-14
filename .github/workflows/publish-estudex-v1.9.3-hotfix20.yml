@@ -1,0 +1,167 @@
+name: Publish ESTUDEX v1.9.3 Hotfix 20 Cloud Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - hotfixes/v1.9.24-hotfix20/**
+      - .github/workflows/publish-estudex-v1.9.3-hotfix20.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-publish:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      BASE_TAG: v1.9.23-hotfix19
+      RELEASE_TAG: v1.9.24-hotfix20
+      BASE_SETUP_SHA256: 071f7915f322d13d486336a64bb70b82fdf2e63c8bebf59cd48be30e68fa5156
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download and verify Hotfix 19 baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download $env:BASE_TAG --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          $hash = (Get-FileHash 'ESTUDEX-Setup.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:BASE_SETUP_SHA256) { throw "Hotfix 19 baseline SHA mismatch: $hash" }
+
+      - name: Recover exact Hotfix 19 application source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path base-setup,base-nupkg,app | Out-Null
+          & 7z x 'ESTUDEX-Setup.exe' '-obase-setup' -y | Out-Null
+          $nupkg = Get-ChildItem base-setup -Recurse -Filter 'blazerx-1.9.23-full.nupkg' | Select-Object -First 1
+          if (-not $nupkg) { throw 'Hotfix 19 nupkg not found inside published installer.' }
+          & 7z x $nupkg.FullName '-obase-nupkg' -y | Out-Null
+          $asar = Get-ChildItem base-nupkg -Recurse -Filter 'app.asar' | Select-Object -First 1
+          if (-not $asar) { throw 'Hotfix 19 app.asar not found.' }
+          npx --yes @electron/asar extract $asar.FullName app
+          foreach ($required in @('server.js','public/estudex-engine.js','public/js/estudex-engine-socket-compat.js','public/js/home.js','public/css/home.css')) {
+            if (-not (Test-Path (Join-Path 'app' $required))) { throw "Recovered app missing $required" }
+          }
+          node hotfixes/v1.9.23-hotfix19/contract.cjs app
+          $baseHomeJs = (Get-FileHash 'app/public/js/home.js' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $baseHomeCss = (Get-FileHash 'app/public/css/home.css' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "BASE_HOME_JS=$baseHomeJs" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "BASE_HOME_CSS=$baseHomeCss" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Apply Hotfix 20 cloud friends-test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node hotfixes/v1.9.24-hotfix20/patch.cjs app
+          node --check app/server.js
+          node --check app/public/estudex-engine.js
+          node --check app/public/js/estudex-engine-socket-compat.js
+          node --check app/main.js
+          node --check app/preload.js
+          node hotfixes/v1.9.24-hotfix20/contract.cjs app
+          $homeJs = (Get-FileHash 'app/public/js/home.js' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $homeCss = (Get-FileHash 'app/public/css/home.css' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($homeJs -ne $env:BASE_HOME_JS) { throw 'Canonical V10.10 home.js changed.' }
+          if ($homeCss -ne $env:BASE_HOME_CSS) { throw 'Canonical V10.10 home.css changed.' }
+
+      - name: Install build dependencies
+        shell: pwsh
+        working-directory: app
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path node_modules) { Remove-Item node_modules -Recurse -Force }
+          npm install --no-audit --no-fund
+
+      - name: Build ESTUDEX technical revision 1.9.24
+        shell: pwsh
+        working-directory: app
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npx electron-forge make --platform=win32 --arch=x64
+
+      - name: Verify final package and canonical V10.10 UI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist,verify-nupkg,verify-app | Out-Null
+          $setup = Get-ChildItem 'app/out/make' -Recurse -Filter 'ESTUDEX-Setup.exe' | Select-Object -First 1
+          $nupkg = Get-ChildItem 'app/out/make' -Recurse -Filter 'blazerx-1.9.24-full.nupkg' | Select-Object -First 1
+          if (-not $setup) { throw 'ESTUDEX-Setup.exe was not generated.' }
+          if (-not $nupkg) { throw 'blazerx-1.9.24-full.nupkg was not generated.' }
+          Copy-Item $setup.FullName 'dist/ESTUDEX-Setup.exe' -Force
+          Copy-Item $setup.FullName 'dist/BLAZERX-Setup.exe' -Force
+          Copy-Item $nupkg.FullName 'dist/blazerx-1.9.24-full.nupkg' -Force
+          & 7z x $nupkg.FullName '-overify-nupkg' -y | Out-Null
+          $asar = Get-ChildItem verify-nupkg -Recurse -Filter 'app.asar' | Select-Object -First 1
+          if (-not $asar) { throw 'Final app.asar missing from nupkg.' }
+          npx --yes @electron/asar extract $asar.FullName verify-app
+          node hotfixes/v1.9.24-hotfix20/contract.cjs verify-app
+          $homeJs = (Get-FileHash 'verify-app/public/js/home.js' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $homeCss = (Get-FileHash 'verify-app/public/css/home.css' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($homeJs -ne $env:BASE_HOME_JS) { throw 'Packaged V10.10 home.js changed.' }
+          if ($homeCss -ne $env:BASE_HOME_CSS) { throw 'Packaged V10.10 home.css changed.' }
+          $nuspec = Get-ChildItem verify-nupkg -Recurse -Filter 'blazerx.nuspec' | Select-Object -First 1
+          if (-not $nuspec) { throw 'Final blazerx.nuspec missing.' }
+          $nuspecText = Get-Content $nuspec.FullName -Raw
+          if ($nuspecText -notmatch '<version>1\.9\.24</version>') { throw 'Final Squirrel package version is not 1.9.24.' }
+          $setupHash = (Get-FileHash 'dist/ESTUDEX-Setup.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "SETUP_SHA256=$setupHash" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "ESTUDEX Hotfix 20 installer SHA-256: $setupHash"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESTUDEX-v1.9.3-Hotfix20-Cloud-Test
+          path: |
+            dist/ESTUDEX-Setup.exe
+            dist/BLAZERX-Setup.exe
+            dist/blazerx-1.9.24-full.nupkg
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Publish ESTUDEX v1.9.3 Hotfix 20 Cloud Test
+        if: ${{ github.ref == 'refs/heads/main' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release view $env:RELEASE_TAG --repo Kodezinho22/BLAZERX-Downloads *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Release $env:RELEASE_TAG already exists; refusing to overwrite a versioned update." }
+          $notes = @"
+          ESTUDEX v1.9.3 — Hotfix 20 Cloud Friends Test
+
+          Revisão técnica 1.9.24, construída diretamente sobre o Hotfix 19 publicado e verificado.
+
+          Esta é uma build temporária de teste para até 7 pessoas:
+          - criação e entrada em salas não exigem Radmin;
+          - sinalização das salas usa o servidor ESTUDEX no Back4App;
+          - endpoint de teste: https://estudexserver-p1t0c2xc.b4a.run;
+          - voz, câmera e compartilhamento de tela continuam WebRTC P2P entre os participantes;
+          - STUN público habilitado para atravessar NAT quando possível;
+          - TURN ainda não está configurado, então redes/NAT muito restritivos podem impedir uma conexão P2P;
+          - códigos de sala e lógica visual atual foram preservados;
+          - V10.10 continua autoridade visual absoluta e home.js/home.css foram preservados byte por byte.
+
+          IMPORTANTE:
+          - o domínio atual do Back4App é temporário e serve somente para o teste inicial;
+          - antes de testar, o serviço estudex-server no Back4App precisa estar redeployado no commit mais recente do repositório Kodezz666/estudex-server.
+
+          Produto: ESTUDEX v1.9.3
+          Revisão técnica: 1.9.24
+          Base verificada: v1.9.23-hotfix19
+
+          SHA-256 do instalador:
+          $env:SETUP_SHA256
+          "@
+          Set-Content -Path release-notes-hotfix20.txt -Value $notes -Encoding utf8
+          gh release create $env:RELEASE_TAG 'dist/ESTUDEX-Setup.exe' 'dist/BLAZERX-Setup.exe' --repo Kodezinho22/BLAZERX-Downloads --target main --title 'ESTUDEX v1.9.3 — Hotfix 20 Cloud Test' --notes-file release-notes-hotfix20.txt --latest
