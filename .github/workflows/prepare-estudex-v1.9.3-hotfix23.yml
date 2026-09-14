@@ -2,6 +2,12 @@ name: Prepare ESTUDEX v1.9.3 Hotfix 23 Session Restore
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - hotfix23-session-restore-fix
+    paths:
+      - '.github/workflows/prepare-estudex-v1.9.3-hotfix23.yml'
+      - 'hotfixes/v1.9.27-hotfix23/**'
 
 permissions:
   contents: read
