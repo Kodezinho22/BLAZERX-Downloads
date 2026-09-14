@@ -34,15 +34,14 @@ jobs:
           $asar=Get-ChildItem nupkg -Recurse -Filter app.asar | Select-Object -First 1
           if(-not $asar){throw 'asar missing'}
           npx --yes @electron/asar extract $asar.FullName app
-      - name: Print presence excerpts
+      - name: Print exact presence merge functions
         shell: pwsh
         run: |
-          $patterns=@('RADMIN_PEER_GRACE_MS_V194','estudexNetworkPeople','estudexRadminDirectory','lan-peers','estudexProbeRadmin','networkPeople','online:false','online:true')
-          foreach($p in $patterns){
-            Write-Host "===== ENGINE PATTERN: $p ====="
-            Select-String -Path 'app/public/estudex-engine.js' -Pattern $p -SimpleMatch -Context 12,36 | Select-Object -First 8 | ForEach-Object { $_.Context.PreContext; $_.Line; $_.Context.PostContext; '---' }
+          foreach($p in @('async function refreshFriendPresence','function reconcileFriendEndpointsV194','async function listPeers','async function freshLanPeersV194','function healStoredFriendEndpointV194')){
+            Write-Host "===== ENGINE: $p ====="
+            Select-String -Path 'app/public/estudex-engine.js' -Pattern $p -SimpleMatch -Context 5,90 | Select-Object -First 2 | ForEach-Object { $_.Context.PreContext; $_.Line; $_.Context.PostContext; '---' }
           }
-          foreach($p in @('app.get(''/api/social/lan-peers','estudexLanSnapshotV172','estudexDirectPresenceSnapshotV195','estudexRadminCandidateIpsV196')){
-            Write-Host "===== SERVER PATTERN: $p ====="
-            Select-String -Path 'app/server.js' -Pattern $p -SimpleMatch -Context 15,55 | Select-Object -First 8 | ForEach-Object { $_.Context.PreContext; $_.Line; $_.Context.PostContext; '---' }
+          foreach($p in @('function estudexRadminLocalFileIpsV196','async function estudexRadminCandidateIpsV196','if (url.pathname === ''/api/social/lan-peers''')){
+            Write-Host "===== SERVER: $p ====="
+            Select-String -Path 'app/server.js' -Pattern $p -SimpleMatch -Context 5,90 | Select-Object -First 2 | ForEach-Object { $_.Context.PreContext; $_.Line; $_.Context.PostContext; '---' }
           }
