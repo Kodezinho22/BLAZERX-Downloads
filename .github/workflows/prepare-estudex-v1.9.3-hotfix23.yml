@@ -1,23 +1,25 @@
-name: Prepare ESTUDEX v1.9.3 Hotfix 23 Session Restore
+name: Publish ESTUDEX v1.9.3 Hotfix 23 Session Restore
 
 on:
   workflow_dispatch:
   push:
     branches:
+      - main
       - hotfix23-session-restore-fix
     paths:
       - '.github/workflows/prepare-estudex-v1.9.3-hotfix23.yml'
       - 'hotfixes/v1.9.27-hotfix23/**'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build-test:
+  build-publish:
     runs-on: windows-latest
     timeout-minutes: 50
     env:
       BASE_TAG: v1.9.26-hotfix22
+      RELEASE_TAG: v1.9.27-hotfix23
       BASE_SETUP_SHA256: 46497c935f13101f7841074c352018a7b836e79f2d0a38514899fb59410eeedc
 
     steps:
@@ -94,20 +96,68 @@ jobs:
           if (-not $setup) { throw 'ESTUDEX-Setup.exe was not generated.' }
           if (-not $nupkg) { throw 'blazerx-1.9.27-full.nupkg was not generated.' }
           Copy-Item $setup.FullName 'dist/ESTUDEX-Setup.exe' -Force
+          Copy-Item $setup.FullName 'dist/BLAZERX-Setup.exe' -Force
           Copy-Item $nupkg.FullName 'dist/blazerx-1.9.27-full.nupkg' -Force
           & 7z x $nupkg.FullName '-overify-nupkg' -y | Out-Null
           $asar = Get-ChildItem verify-nupkg -Recurse -Filter 'app.asar' | Select-Object -First 1
           if (-not $asar) { throw 'Final app.asar missing from nupkg.' }
           npx --yes @electron/asar extract $asar.FullName verify-app
           node hotfixes/v1.9.27-hotfix23/contract.cjs verify-app
+          $homeJs = (Get-FileHash 'verify-app/public/js/home.js' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $homeCss = (Get-FileHash 'verify-app/public/css/home.css' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($homeJs -ne $env:BASE_HOME_JS) { throw 'Packaged V10.10 home.js changed.' }
+          if ($homeCss -ne $env:BASE_HOME_CSS) { throw 'Packaged V10.10 home.css changed.' }
+          $nuspec = Get-ChildItem verify-nupkg -Recurse -Filter 'blazerx.nuspec' | Select-Object -First 1
+          if (-not $nuspec) { throw 'Final blazerx.nuspec missing.' }
+          $nuspecText = Get-Content $nuspec.FullName -Raw
+          if ($nuspecText -notmatch '<version>1\.9\.27</version>') { throw 'Final Squirrel package version is not 1.9.27.' }
           $setupHash = (Get-FileHash 'dist/ESTUDEX-Setup.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
-          Write-Host "Prepared Hotfix 23 installer SHA-256: $setupHash"
+          "SETUP_SHA256=$setupHash" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "ESTUDEX Hotfix 23 installer SHA-256: $setupHash"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ESTUDEX-v1.9.3-Hotfix23-Session-Restore-TEST
+          name: ESTUDEX-v1.9.3-Hotfix23-Session-Restore
           path: |
             dist/ESTUDEX-Setup.exe
+            dist/BLAZERX-Setup.exe
             dist/blazerx-1.9.27-full.nupkg
-          retention-days: 7
+          retention-days: 14
           if-no-files-found: error
+
+      - name: Publish ESTUDEX v1.9.3 Hotfix 23 Session Restore
+        if: ${{ github.ref == 'refs/heads/main' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release view $env:RELEASE_TAG --repo Kodezinho22/BLAZERX-Downloads *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Release $env:RELEASE_TAG already exists; refusing to overwrite a versioned update." }
+          $notes = @"
+          ESTUDEX v1.9.3 — Hotfix 23 Session Restore
+
+          Revisão técnica 1.9.27, construída diretamente sobre o Hotfix 22 publicado e verificado.
+
+          Correção principal:
+          - corrige a restauração da sessão persistente de Guest/conta ao reabrir o ESTUDEX;
+          - elimina a falha `refreshRoomInvites is not defined` durante o boot social;
+          - preserva a identidade Guest já criada, incluindo o mesmo usuário e dados locais;
+          - mantém o cliente apontado para o backend cloud configurável do ESTUDEX;
+          - preserva o Home V10.10, a migração social do Hotfix 22 e os recursos de mídia anteriores.
+
+          Validação realizada:
+          - atualização instalada por cima do Hotfix 22 sem desinstalação;
+          - sessão do Guest CRIOLEX restaurada após reabrir o aplicativo;
+          - telas Amigos e Caixa de entrada abertas sem regressão observada;
+          - pacote e contrato do Hotfix 23 validados no build.
+
+          Produto: ESTUDEX v1.9.3
+          Revisão técnica: 1.9.27
+          Base verificada: v1.9.26-hotfix22
+
+          SHA-256 do instalador:
+          $env:SETUP_SHA256
+          "@
+          Set-Content -Path release-notes-hotfix23.txt -Value $notes -Encoding utf8
+          gh release create $env:RELEASE_TAG 'dist/ESTUDEX-Setup.exe' 'dist/BLAZERX-Setup.exe' --repo Kodezinho22/BLAZERX-Downloads --target main --title 'ESTUDEX v1.9.3 — Hotfix 23 Session Restore' --notes-file release-notes-hotfix23.txt --latest
