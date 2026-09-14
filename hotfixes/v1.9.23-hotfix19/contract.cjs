@@ -15,7 +15,7 @@ assert(/version:\s*["']1\.9\.23["']/.test(forge),'Squirrel version must be 1.9.2
 assert(server.includes('ESTUDEX_V193_HOTFIX19_DIRECT_RADMIN_LAN'),'H19 server marker missing');
 assert(server.includes('estudexMinecraftLanSnapshotV199'),'H19 direct LAN snapshot missing');
 assert(server.includes('await estudexLanSnapshotBaseV187(waitMs)'),'H19 must consume raw pre-wrapper V172 snapshot');
-assert(server.includes("presenceProof:'radmin-v172-lan-v199'"),'V172 LAN proof missing');
+assert(server.includes("accept(peer, 'radmin-v172-lan-v199')"),'V172 LAN proof wiring missing');
 assert(server.includes("discovery:deep?'minecraft-radmin-lan-v199-deep':'minecraft-radmin-lan-v199'"),'H19 route marker missing');
 
 const payload=section(server,'function estudexLanPresencePayloadV172() {','function estudexLanAnnounceV172');
