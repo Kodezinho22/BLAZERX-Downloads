@@ -1,0 +1,48 @@
+name: Inspect Hotfix 16 presence
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/inspect-h16-presence.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Recover Hotfix 16 app
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release download v1.9.20-hotfix16 --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          New-Item -ItemType Directory -Force -Path setup,nupkg,app | Out-Null
+          & 7z x ESTUDEX-Setup.exe '-osetup' -y | Out-Null
+          $pkg=Get-ChildItem setup -Recurse -Filter 'blazerx-1.9.20-full.nupkg' | Select-Object -First 1
+          if(-not $pkg){throw 'nupkg missing'}
+          & 7z x $pkg.FullName '-onupkg' -y | Out-Null
+          $asar=Get-ChildItem nupkg -Recurse -Filter app.asar | Select-Object -First 1
+          if(-not $asar){throw 'asar missing'}
+          npx --yes @electron/asar extract $asar.FullName app
+      - name: Print presence excerpts
+        shell: pwsh
+        run: |
+          $patterns=@('RADMIN_PEER_GRACE_MS_V194','estudexNetworkPeople','estudexRadminDirectory','lan-peers','estudexProbeRadmin','networkPeople','online:false','online:true')
+          foreach($p in $patterns){
+            Write-Host "===== ENGINE PATTERN: $p ====="
+            Select-String -Path 'app/public/estudex-engine.js' -Pattern $p -SimpleMatch -Context 12,36 | Select-Object -First 8 | ForEach-Object { $_.Context.PreContext; $_.Line; $_.Context.PostContext; '---' }
+          }
+          foreach($p in @('app.get(''/api/social/lan-peers','estudexLanSnapshotV172','estudexDirectPresenceSnapshotV195','estudexRadminCandidateIpsV196')){
+            Write-Host "===== SERVER PATTERN: $p ====="
+            Select-String -Path 'app/server.js' -Pattern $p -SimpleMatch -Context 15,55 | Select-Object -First 8 | ForEach-Object { $_.Context.PreContext; $_.Line; $_.Context.PostContext; '---' }
+          }
