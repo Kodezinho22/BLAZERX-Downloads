@@ -1,0 +1,43 @@
+name: Inspect ESTUDEX Hotfix 26 Runtime
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/inspect-hotfix26-runtime.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Recover Hotfix 26 app source
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download v1.9.30-hotfix26 --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          New-Item -ItemType Directory -Force -Path setup,nupkg,app | Out-Null
+          & 7z x 'ESTUDEX-Setup.exe' '-osetup' -y | Out-Null
+          $pkg = Get-ChildItem setup -Recurse -Filter 'blazerx-1.9.30-full.nupkg' | Select-Object -First 1
+          if (-not $pkg) { throw 'H26 nupkg missing' }
+          & 7z x $pkg.FullName '-onupkg' -y | Out-Null
+          $asar = Get-ChildItem nupkg -Recurse -Filter 'app.asar' | Select-Object -First 1
+          if (-not $asar) { throw 'H26 app.asar missing' }
+          npx --yes @electron/asar extract $asar.FullName app
+      - name: Inspect capture and recent-room anchors
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host '===== CAPTURE SEARCH ====='
+          Get-ChildItem app -Recurse -File | Where-Object {$_.Extension -in '.js','.html'} | Select-String -Pattern 'desktopCapturer|getDisplayMedia|setDisplayMediaRequestHandler|chromeMediaSource|cursor|screenShareEnabled|capture' -CaseSensitive:$false -Context 3,7 | Select-Object -First 180 | ForEach-Object { Write-Host ("--- {0}:{1}`n{2}`n>>> {3}`n{4}" -f $_.Path,$_.LineNumber,($_.Context.PreContext -join "`n"),$_.Line,($_.Context.PostContext -join "`n")) }
+          Write-Host '===== RECENT ROOM SEARCH ====='
+          Get-ChildItem app/public -Recurse -File | Where-Object {$_.Extension -in '.js','.html'} | Select-String -Pattern 'recentRooms|listSaved|saved-room|savedRooms|recent room|salas recentes|estudex.*room' -CaseSensitive:$false -Context 3,7 | Select-Object -First 180 | ForEach-Object { Write-Host ("--- {0}:{1}`n{2}`n>>> {3}`n{4}" -f $_.Path,$_.LineNumber,($_.Context.PreContext -join "`n"),$_.Line,($_.Context.PostContext -join "`n")) }
