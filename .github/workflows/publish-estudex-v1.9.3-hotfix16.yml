@@ -1,0 +1,165 @@
+name: Publish ESTUDEX v1.9.3 Hotfix 16
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - hotfixes/v1.9.20-hotfix16/**
+      - .github/workflows/publish-estudex-v1.9.3-hotfix16.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-publish:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      BASE_TAG: v1.9.19-hotfix15
+      RELEASE_TAG: v1.9.20-hotfix16
+      BASE_SETUP_SHA256: 2aa84ca4a1589e76fbff4fcd0f2efaa49d3c1646e2d049181b233515a943eb15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download and verify Hotfix 15 baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download $env:BASE_TAG --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          $hash = (Get-FileHash 'ESTUDEX-Setup.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:BASE_SETUP_SHA256) { throw "Hotfix 15 baseline SHA mismatch: $hash" }
+
+      - name: Recover exact Hotfix 15 application source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path base-setup,base-nupkg,app | Out-Null
+          & 7z x 'ESTUDEX-Setup.exe' '-obase-setup' -y | Out-Null
+          $nupkg = Get-ChildItem base-setup -Recurse -Filter 'blazerx-1.9.19-full.nupkg' | Select-Object -First 1
+          if (-not $nupkg) { throw 'Hotfix 15 nupkg not found inside published installer.' }
+          & 7z x $nupkg.FullName '-obase-nupkg' -y | Out-Null
+          $asar = Get-ChildItem base-nupkg -Recurse -Filter 'app.asar' | Select-Object -First 1
+          if (-not $asar) { throw 'Hotfix 15 app.asar not found.' }
+          npx --yes @electron/asar extract $asar.FullName app
+          if (-not (Test-Path 'app/server.js')) { throw 'Recovered app is missing server.js.' }
+          if (-not (Test-Path 'app/public/estudex-engine.js')) { throw 'Recovered app is missing ESTUDEX engine.' }
+          if (-not (Test-Path 'app/public/js/home.js')) { throw 'Canonical V10.10 home.js missing.' }
+          if (-not (Test-Path 'app/public/css/home.css')) { throw 'Canonical V10.10 home.css missing.' }
+          $baseHomeJs = (Get-FileHash 'app/public/js/home.js' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $baseHomeCss = (Get-FileHash 'app/public/css/home.css' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "BASE_HOME_JS=$baseHomeJs" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "BASE_HOME_CSS=$baseHomeCss" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Apply Hotfix 16 Radmin member discovery repair
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node hotfixes/v1.9.20-hotfix16/patch.cjs app
+          node --check app/server.js
+          node --check app/public/estudex-engine.js
+          node --check app/main.js
+          node --check app/preload.js
+          node hotfixes/v1.9.20-hotfix16/contract.cjs app
+          $homeJs = (Get-FileHash 'app/public/js/home.js' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $homeCss = (Get-FileHash 'app/public/css/home.css' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($homeJs -ne $env:BASE_HOME_JS) { throw 'Canonical V10.10 home.js changed.' }
+          if ($homeCss -ne $env:BASE_HOME_CSS) { throw 'Canonical V10.10 home.css changed.' }
+
+      - name: Install build dependencies
+        shell: pwsh
+        working-directory: app
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path node_modules) { Remove-Item node_modules -Recurse -Force }
+          npm install --no-audit --no-fund
+
+      - name: Build ESTUDEX technical revision 1.9.20
+        shell: pwsh
+        working-directory: app
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npx electron-forge make --platform=win32 --arch=x64
+
+      - name: Verify final Squirrel package and canonical V10.10 UI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist,verify-nupkg,verify-app | Out-Null
+          $setup = Get-ChildItem 'app/out/make' -Recurse -Filter 'ESTUDEX-Setup.exe' | Select-Object -First 1
+          $nupkg = Get-ChildItem 'app/out/make' -Recurse -Filter 'blazerx-1.9.20-full.nupkg' | Select-Object -First 1
+          if (-not $setup) { throw 'ESTUDEX-Setup.exe was not generated.' }
+          if (-not $nupkg) { throw 'blazerx-1.9.20-full.nupkg was not generated.' }
+          Copy-Item $setup.FullName 'dist/ESTUDEX-Setup.exe' -Force
+          Copy-Item $setup.FullName 'dist/BLAZERX-Setup.exe' -Force
+          Copy-Item $nupkg.FullName 'dist/blazerx-1.9.20-full.nupkg' -Force
+          & 7z x $nupkg.FullName '-overify-nupkg' -y | Out-Null
+          $asar = Get-ChildItem verify-nupkg -Recurse -Filter 'app.asar' | Select-Object -First 1
+          if (-not $asar) { throw 'Final app.asar missing from nupkg.' }
+          npx --yes @electron/asar extract $asar.FullName verify-app
+          node hotfixes/v1.9.20-hotfix16/contract.cjs verify-app
+          $homeJs = (Get-FileHash 'verify-app/public/js/home.js' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $homeCss = (Get-FileHash 'verify-app/public/css/home.css' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($homeJs -ne $env:BASE_HOME_JS) { throw 'Packaged V10.10 home.js changed.' }
+          if ($homeCss -ne $env:BASE_HOME_CSS) { throw 'Packaged V10.10 home.css changed.' }
+          $nuspec = Get-ChildItem verify-nupkg -Recurse -Filter 'blazerx.nuspec' | Select-Object -First 1
+          if (-not $nuspec) { throw 'Final blazerx.nuspec missing.' }
+          $nuspecText = Get-Content $nuspec.FullName -Raw
+          if ($nuspecText -notmatch '<version>1\.9\.20</version>') { throw 'Final Squirrel package version is not 1.9.20.' }
+          $setupHash = (Get-FileHash 'dist/ESTUDEX-Setup.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "SETUP_SHA256=$setupHash" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "ESTUDEX Hotfix 16 installer SHA-256: $setupHash"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESTUDEX-v1.9.3-Hotfix16
+          path: |
+            dist/ESTUDEX-Setup.exe
+            dist/BLAZERX-Setup.exe
+            dist/blazerx-1.9.20-full.nupkg
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Publish ESTUDEX v1.9.3 Hotfix 16
+        if: ${{ github.ref == 'refs/heads/main' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release view $env:RELEASE_TAG --repo Kodezinho22/BLAZERX-Downloads *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Release $env:RELEASE_TAG already exists; refusing to overwrite a versioned update." }
+          $notes = @"
+          ESTUDEX v1.9.3 — Hotfix 16
+
+          Revisão técnica 1.9.20, construída diretamente sobre o Hotfix 15 publicado e verificado.
+
+          Correção principal — Piru/Radmin aparece no Radmin mas não no ESTUDEX:
+          - corrige a lacuna do Hotfix 15: a prova de Online estava correta, mas a lista de IPs candidatos ainda dependia principalmente da tabela ARP/vizinhos do Windows;
+          - agora o ESTUDEX coleta candidatos 26.x de várias fontes locais: beacon verificado, ARP/vizinhos, endpoints já conhecidos, árvore de acessibilidade da janela do Radmin VPN, arquivos/logs/configs locais do Radmin e conexões/registro do Windows;
+          - o ESTUDEX memoriza IPs que já foram identificados com sucesso, então depois do primeiro encontro continua testando o peer mesmo que a entrada ARP desapareça;
+          - nenhum IP vira Online só por aparecer no Radmin. Todo candidato ainda precisa responder /api/social/direct-identify pela TCP 8787 com um ESTUDEX realmente aberto;
+          - se o Radmin estiver aberto mas o ESTUDEX remoto estiver fechado, direct-identify falha e o usuário permanece/volta Offline.
+
+          Preservação cumulativa:
+          - mantém Hotfixes 1–15;
+          - V10.10 continua autoridade visual absoluta;
+          - public/js/home.js e public/css/home.css preservados byte por byte;
+          - identidade Squirrel/updater continua blazerx.
+
+          Produto: ESTUDEX v1.9.3
+          Revisão técnica: 1.9.20
+          Base verificada: v1.9.19-hotfix15
+
+          SHA-256 do instalador:
+          $env:SETUP_SHA256
+          "@
+          Set-Content -Path release-notes-hotfix16.txt -Value $notes -Encoding utf8
+          gh release create $env:RELEASE_TAG 'dist/ESTUDEX-Setup.exe' 'dist/BLAZERX-Setup.exe' --repo Kodezinho22/BLAZERX-Downloads --target main --title 'ESTUDEX v1.9.3 — Hotfix 16' --notes-file release-notes-hotfix16.txt --latest
