@@ -7,7 +7,7 @@ on:
       - '.github/workflows/inspect-hotfix26-runtime.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   inspect:
@@ -33,11 +33,34 @@ jobs:
           $asar = Get-ChildItem nupkg -Recurse -Filter 'app.asar' | Select-Object -First 1
           if (-not $asar) { throw 'H26 app.asar missing' }
           npx --yes @electron/asar extract $asar.FullName app
-      - name: Inspect capture and recent-room anchors
+      - name: Persist targeted runtime inspection
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Write-Host '===== CAPTURE SEARCH ====='
-          Get-ChildItem app -Recurse -File | Where-Object {$_.Extension -in '.js','.html'} | Select-String -Pattern 'desktopCapturer|getDisplayMedia|setDisplayMediaRequestHandler|chromeMediaSource|cursor|screenShareEnabled|capture' -CaseSensitive:$false -Context 3,7 | Select-Object -First 180 | ForEach-Object { Write-Host ("--- {0}:{1}`n{2}`n>>> {3}`n{4}" -f $_.Path,$_.LineNumber,($_.Context.PreContext -join "`n"),$_.Line,($_.Context.PostContext -join "`n")) }
-          Write-Host '===== RECENT ROOM SEARCH ====='
-          Get-ChildItem app/public -Recurse -File | Where-Object {$_.Extension -in '.js','.html'} | Select-String -Pattern 'recentRooms|listSaved|saved-room|savedRooms|recent room|salas recentes|estudex.*room' -CaseSensitive:$false -Context 3,7 | Select-Object -First 180 | ForEach-Object { Write-Host ("--- {0}:{1}`n{2}`n>>> {3}`n{4}" -f $_.Path,$_.LineNumber,($_.Context.PreContext -join "`n"),$_.Line,($_.Context.PostContext -join "`n")) }
+          New-Item -ItemType Directory -Force -Path _inspection | Out-Null
+          $out = '_inspection/h26-runtime.txt'
+          Set-Content $out '===== CAPTURE SEARCH =====' -Encoding utf8
+          Get-ChildItem app -Recurse -File | Where-Object {$_.Extension -in '.js','.html'} | Select-String -Pattern 'desktopCapturer|getDisplayMedia|setDisplayMediaRequestHandler|chromeMediaSource|cursor|screenShareEnabled|capture' -CaseSensitive:$false -Context 8,16 | Select-Object -First 220 | ForEach-Object { Add-Content $out ("--- {0}:{1}`n{2}`n>>> {3}`n{4}`n" -f $_.Path,$_.LineNumber,($_.Context.PreContext -join "`n"),$_.Line,($_.Context.PostContext -join "`n")) -Encoding utf8 }
+          Add-Content $out '===== RECENT ROOM SEARCH =====' -Encoding utf8
+          Get-ChildItem app/public -Recurse -File | Where-Object {$_.Extension -in '.js','.html'} | Select-String -Pattern 'recentRooms|listSaved|saved-room|savedRooms|recent room|salas recentes|estudex.*room' -CaseSensitive:$false -Context 8,16 | Select-Object -First 220 | ForEach-Object { Add-Content $out ("--- {0}:{1}`n{2}`n>>> {3}`n{4}`n" -f $_.Path,$_.LineNumber,($_.Context.PreContext -join "`n"),$_.Line,($_.Context.PostContext -join "`n")) -Encoding utf8 }
+          Add-Content $out '===== MAIN/ENGINE TARGET SLICES =====' -Encoding utf8
+          foreach($file in @('app/main.js','app/public/estudex-engine.js','app/public/js/estudex-engine-media-bindings.js','app/public/js/estudex-engine-media-preferences-bindings.js','app/public/js/estudex-engine-socket-compat.js','app/public/js/estudex-v193-cloud-social-v1926.js')){
+            if(Test-Path $file){
+              Add-Content $out ("### FILE: $file") -Encoding utf8
+              $matches=Select-String -Path $file -Pattern 'desktopCapturer|getDisplayMedia|screen|cursor|listSaved|recentRooms|savedRooms|saved-room' -CaseSensitive:$false
+              foreach($m in ($matches | Select-Object -First 60)){
+                $lines=Get-Content $file; $s=[Math]::Max(1,$m.LineNumber-12); $e=[Math]::Min($lines.Count,$m.LineNumber+24)
+                Add-Content $out ("-- L$($m.LineNumber) --") -Encoding utf8
+                for($i=$s;$i -le $e;$i++){ Add-Content $out ("{0:D5}: {1}" -f $i,$lines[$i-1]) -Encoding utf8 }
+              }
+            }
+          }
+      - name: Commit inspection output
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add _inspection/h26-runtime.txt
+          git commit -m 'chore: save Hotfix 26 runtime inspection'
+          git push
