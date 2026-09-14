@@ -1,0 +1,45 @@
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const root = path.resolve(process.argv[2] || process.cwd());
+const read = rel => fs.readFileSync(path.join(root, rel), 'utf8');
+const sha = rel => crypto.createHash('sha256').update(fs.readFileSync(path.join(root, rel))).digest('hex');
+const must = (condition, message) => { if (!condition) throw new Error('ESTUDEX Hotfix 26 contract: ' + message); };
+
+const pkg = JSON.parse(read('package.json'));
+const forge = read('forge.config.js');
+const cloud = read('public/js/estudex-v193-cloud-social-v1926.js');
+const watchdog = read('public/js/estudex-v193-hotfix14-connectivity-media-room.js');
+const runtime = read('public/js/estudex-v193-hotfix26-room-qol.js');
+const index = read('public/index.html');
+const manifest = JSON.parse(read('estudex-hotfix26-manifest.json'));
+
+must(pkg.version === '1.9.30', 'package version');
+must(/version:\s*["']1\.9\.30["']/.test(forge), 'forge version');
+must(cloud.includes('ESTUDEX_V193_HOTFIX25_ACCOUNT_LOGIN'), 'H25 account login marker missing');
+must(cloud.includes('ESTUDEX_V193_HOTFIX26_RECENT_ROOM_AUTH_GATE'), 'recent-room auth gate missing');
+must(cloud.includes('async function listSavedRooms(){if(!state.token)return[];'), 'unauthenticated saved-room fallback still active');
+must(cloud.includes('ESTUDEX_V193_HOTFIX26_ROOM_UX'), 'H26 cloud marker missing');
+must(watchdog.includes('ESTUDEX_V193_HOTFIX26_REMOTE_WATCHDOG_ONLY'), 'remote-only watchdog marker missing');
+must(watchdog.includes("||!remoteViewActive()){attempts.delete(id);return;}"), 'watchdog remote-view guard missing');
+must(runtime.includes('ESTUDEX_V193_HOTFIX26_ROOM_QOL'), 'H26 runtime marker missing');
+must(runtime.includes("button.textContent='Encerrar transmissão'"), 'explicit stop-broadcast control missing');
+must(runtime.includes("screen.click();"), 'stop-broadcast control is not bridged to canonical screen toggle');
+must(runtime.includes("prefix.textContent='@'"), 'public tag @ prefix missing');
+must(runtime.includes("document.addEventListener('keydown',closeTopModalWithEscape,true)"), 'Escape modal handler missing');
+must(runtime.includes("layer.id==='identityModal'"), 'mandatory identity modal Escape guard missing');
+must(index.includes('<script src="/js/estudex-v193-hotfix26-room-qol.js"></script>'), 'H26 runtime script injection missing');
+must(index.indexOf('estudex-v193-hotfix26-room-qol.js') > index.indexOf('estudex-v193-hotfix14-connectivity-media-room.js'), 'H26 runtime must load after H14 room runtime');
+must(manifest.baseTag === 'v1.9.29-hotfix25', 'manifest base tag');
+must(manifest.technicalVersion === '1.9.30', 'manifest technical version');
+must(manifest.hotfix === 26, 'manifest hotfix number');
+must(manifest.backend?.serverVersion === '0.3.2', 'backend version');
+must(manifest.roomUx?.remoteWatchdogOnly === true, 'watchdog manifest flag');
+must(manifest.roomUx?.explicitStopBroadcast === true, 'stop broadcast manifest flag');
+must(manifest.roomUx?.escapeClosesModals === true, 'Escape modal manifest flag');
+must(manifest.roomUx?.recentRoomsAuthGated === true, 'recent-room manifest flag');
+must(manifest.identity?.publicTagAtPrefix === 'presentation-only', 'public tag presentation flag');
+must(sha('public/js/home.js') === manifest.canonicalHome.js, 'canonical V10.10 home.js changed');
+must(sha('public/css/home.css') === manifest.canonicalHome.css, 'canonical V10.10 home.css changed');
+
+console.log('ESTUDEX Hotfix 26 room stream QoL contract passed.');
