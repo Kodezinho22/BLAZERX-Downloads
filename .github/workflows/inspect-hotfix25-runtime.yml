@@ -1,0 +1,67 @@
+name: Inspect ESTUDEX Hotfix 25 Runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/inspect-hotfix25-runtime.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Recover Hotfix 25 app source
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download v1.9.29-hotfix25 --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          New-Item -ItemType Directory -Force -Path setup,nupkg,app | Out-Null
+          & 7z x 'ESTUDEX-Setup.exe' '-osetup' -y | Out-Null
+          $pkg = Get-ChildItem setup -Recurse -Filter 'blazerx-1.9.29-full.nupkg' | Select-Object -First 1
+          if (-not $pkg) { throw 'H25 nupkg missing' }
+          & 7z x $pkg.FullName '-onupkg' -y | Out-Null
+          $asar = Get-ChildItem nupkg -Recurse -Filter 'app.asar' | Select-Object -First 1
+          if (-not $asar) { throw 'H25 app.asar missing' }
+          npx --yes @electron/asar extract $asar.FullName app
+      - name: Inspect stream, room, tag and modal anchors
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $patterns = @(
+            'A transmissão não respondeu',
+            'Compartilhando tela',
+            'getDisplayMedia',
+            'stream-timeout',
+            'screenStream',
+            'stopScreen',
+            'Salas recentes',
+            'recentRooms',
+            'TAG PÚBLICA',
+            'specEditTag',
+            'modal-layer',
+            'keydown',
+            'Escape'
+          )
+          $files = Get-ChildItem app/public -Recurse -File | Where-Object { $_.Extension -in '.js','.html','.css' }
+          foreach ($p in $patterns) {
+            Write-Host "===== PATTERN: $p ====="
+            $matches = $files | Select-String -SimpleMatch -Pattern $p -Context 6,10
+            if (-not $matches) { Write-Host '(no matches)'; continue }
+            foreach ($m in ($matches | Select-Object -First 12)) {
+              Write-Host "--- $($m.Path):$($m.LineNumber) ---"
+              Write-Host ($m.Context.PreContext -join "`n")
+              Write-Host ">>> $($m.Line)"
+              Write-Host ($m.Context.PostContext -join "`n")
+            }
+          }
