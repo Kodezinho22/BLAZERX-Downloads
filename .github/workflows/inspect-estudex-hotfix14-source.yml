@@ -41,29 +41,39 @@ jobs:
           find setup-extracted -type f | sort > inspect/setup-extracted-files.txt
 
           nupkg="$(find setup-extracted -type f -name '*.nupkg' -print -quit)"
-          if [ -n "$nupkg" ]; then
-            echo "nupkg=$nupkg" > inspect/paths.txt
-            mkdir package
-            unzip -q "$nupkg" -d package
-            find package -maxdepth 6 -type f | sort > inspect/nupkg-files.txt
-            asar="$(find package -type f -name 'app.asar' -print -quit)"
-            if [ -n "$asar" ]; then
-              echo "asar=$asar" >> inspect/paths.txt
-              npx --yes @electron/asar extract "$asar" extracted-app
-              cp extracted-app/package.json inspect/package.json
-              cp extracted-app/server.js inspect/server.js
-              cp extracted-app/main.js inspect/main.js
-              cp extracted-app/preload.js inspect/preload.js
-              cp extracted-app/public/app.js inspect/app.js
-              cp extracted-app/public/index.html inspect/index.html
-              if [ -f extracted-app/public/home.js ]; then cp extracted-app/public/home.js inspect/home.js; fi
-              if [ -f extracted-app/public/home.css ]; then cp extracted-app/public/home.css inspect/home.css; fi
-            fi
-          else
+          if [ -z "$nupkg" ]; then
             echo 'No nupkg extracted directly from Setup.exe.' > inspect/paths.txt
+            exit 0
           fi
 
+          echo "nupkg=$nupkg" > inspect/paths.txt
+          mkdir package
+          unzip -q "$nupkg" -d package
+          find package -maxdepth 8 -type f | sort > inspect/nupkg-files.txt
+          asar="$(find package -type f -name 'app.asar' -print -quit)"
+          if [ -z "$asar" ]; then
+            echo 'No app.asar inside extracted nupkg.' >> inspect/paths.txt
+            exit 0
+          fi
+
+          echo "asar=$asar" >> inspect/paths.txt
+          npx --yes @electron/asar extract "$asar" extracted-app
+          find extracted-app -maxdepth 5 -type f | sort > inspect/app-files.txt
+
+          for src in \
+            package.json server.js main.js preload.js \
+            public/app.js public/index.html public/home.js public/home.css \
+            public/estudex-engine.js public/estudex-engine.css; do
+            if [ -f "extracted-app/$src" ]; then
+              dest="$(echo "$src" | tr '/' '_')"
+              cp "extracted-app/$src" "inspect/$dest"
+            fi
+          done
+
+          grep -RIl --exclude='*.map' -E 'lan-peers|direct-identify|ESTUDEX|radmin|Radmin' extracted-app 2>/dev/null | head -n 80 > inspect/relevant-files.txt || true
+
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: estudex-hotfix14-source-inspection
           path: inspect
