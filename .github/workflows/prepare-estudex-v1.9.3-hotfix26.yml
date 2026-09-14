@@ -1,0 +1,170 @@
+name: Publish ESTUDEX v1.9.3 Hotfix 26 Room UX
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/prepare-estudex-v1.9.3-hotfix26.yml'
+      - 'hotfixes/v1.9.30-hotfix26/**'
+
+permissions:
+  contents: write
+
+jobs:
+  build-publish:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    env:
+      BASE_TAG: v1.9.29-hotfix25
+      RELEASE_TAG: v1.9.30-hotfix26
+      BASE_SETUP_SHA256: 52fcff63a03d99a6044922cd2b43b2e692a8bd610d105c3f67d762a83627c376
+      BACKEND_HEALTH: https://site--estudex-server--bs292kkyk4sm.code.run/health
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify live ESTUDEX backend
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $health = Invoke-RestMethod -Uri $env:BACKEND_HEALTH -Method Get -TimeoutSec 20
+          if (-not $health.ok) { throw 'ESTUDEX backend health check failed.' }
+          if ($health.version -ne '0.3.2') { throw "Expected backend v0.3.2, got $($health.version)" }
+          if ($health.socialPersistence -ne 'parse') { throw 'Persistent social backend is not active.' }
+          Write-Host "Backend verified: v$($health.version), persistence=$($health.socialPersistence)"
+
+      - name: Download and verify Hotfix 25 baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download $env:BASE_TAG --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          $hash = (Get-FileHash 'ESTUDEX-Setup.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:BASE_SETUP_SHA256) { throw "Hotfix 25 baseline SHA mismatch: $hash" }
+
+      - name: Recover exact Hotfix 25 application source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path base-setup,base-nupkg,app | Out-Null
+          & 7z x 'ESTUDEX-Setup.exe' '-obase-setup' -y | Out-Null
+          $nupkg = Get-ChildItem base-setup -Recurse -Filter 'blazerx-1.9.29-full.nupkg' | Select-Object -First 1
+          if (-not $nupkg) { throw 'Hotfix 25 nupkg not found inside published installer.' }
+          & 7z x $nupkg.FullName '-obase-nupkg' -y | Out-Null
+          $asar = Get-ChildItem base-nupkg -Recurse -Filter 'app.asar' | Select-Object -First 1
+          if (-not $asar) { throw 'Hotfix 25 app.asar not found.' }
+          npx --yes @electron/asar extract $asar.FullName app
+          node hotfixes/v1.9.29-hotfix25/contract.cjs app
+          $baseHomeJs = (Get-FileHash 'app/public/js/home.js' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $baseHomeCss = (Get-FileHash 'app/public/css/home.css' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "BASE_HOME_JS=$baseHomeJs" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "BASE_HOME_CSS=$baseHomeCss" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Apply Hotfix 26 room UX
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node hotfixes/v1.9.30-hotfix26/patch.cjs app
+          node --check app/public/js/estudex-v193-cloud-social-v1926.js
+          node --check app/public/js/estudex-v193-hotfix14-connectivity-media-room.js
+          node --check app/public/js/estudex-v193-hotfix26-room-qol.js
+          node --check app/main.js
+          node --check app/preload.js
+          node hotfixes/v1.9.30-hotfix26/contract.cjs app
+          $homeJs = (Get-FileHash 'app/public/js/home.js' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $homeCss = (Get-FileHash 'app/public/css/home.css' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($homeJs -ne $env:BASE_HOME_JS) { throw 'Canonical V10.10 home.js changed.' }
+          if ($homeCss -ne $env:BASE_HOME_CSS) { throw 'Canonical V10.10 home.css changed.' }
+
+      - name: Install build dependencies
+        shell: pwsh
+        working-directory: app
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path node_modules) { Remove-Item node_modules -Recurse -Force }
+          npm install --no-audit --no-fund
+
+      - name: Build ESTUDEX technical revision 1.9.30
+        shell: pwsh
+        working-directory: app
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npx electron-forge make --platform=win32 --arch=x64
+
+      - name: Verify final package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist,verify-nupkg,verify-app | Out-Null
+          $setup = Get-ChildItem 'app/out/make' -Recurse -Filter 'ESTUDEX-Setup.exe' | Select-Object -First 1
+          $nupkg = Get-ChildItem 'app/out/make' -Recurse -Filter 'blazerx-1.9.30-full.nupkg' | Select-Object -First 1
+          if (-not $setup) { throw 'ESTUDEX-Setup.exe was not generated.' }
+          if (-not $nupkg) { throw 'blazerx-1.9.30-full.nupkg was not generated.' }
+          Copy-Item $setup.FullName 'dist/ESTUDEX-Setup.exe' -Force
+          Copy-Item $setup.FullName 'dist/BLAZERX-Setup.exe' -Force
+          Copy-Item $nupkg.FullName 'dist/blazerx-1.9.30-full.nupkg' -Force
+          & 7z x $nupkg.FullName '-overify-nupkg' -y | Out-Null
+          $asar = Get-ChildItem verify-nupkg -Recurse -Filter 'app.asar' | Select-Object -First 1
+          if (-not $asar) { throw 'Final app.asar missing from nupkg.' }
+          npx --yes @electron/asar extract $asar.FullName verify-app
+          node hotfixes/v1.9.30-hotfix26/contract.cjs verify-app
+          $homeJs = (Get-FileHash 'verify-app/public/js/home.js' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $homeCss = (Get-FileHash 'verify-app/public/css/home.css' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($homeJs -ne $env:BASE_HOME_JS) { throw 'Packaged V10.10 home.js changed.' }
+          if ($homeCss -ne $env:BASE_HOME_CSS) { throw 'Packaged V10.10 home.css changed.' }
+          $nuspec = Get-ChildItem verify-nupkg -Recurse -Filter 'blazerx.nuspec' | Select-Object -First 1
+          if (-not $nuspec) { throw 'Final blazerx.nuspec missing.' }
+          $nuspecText = Get-Content $nuspec.FullName -Raw
+          if ($nuspecText -notmatch '<version>1\.9\.30</version>') { throw 'Final Squirrel package version is not 1.9.30.' }
+          $setupHash = (Get-FileHash 'dist/ESTUDEX-Setup.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "SETUP_SHA256=$setupHash" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "ESTUDEX Hotfix 26 installer SHA-256: $setupHash"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESTUDEX-v1.9.3-Hotfix26-Room-UX
+          path: |
+            dist/ESTUDEX-Setup.exe
+            dist/BLAZERX-Setup.exe
+            dist/blazerx-1.9.30-full.nupkg
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Publish ESTUDEX v1.9.3 Hotfix 26 Room UX
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release view $env:RELEASE_TAG --repo Kodezinho22/BLAZERX-Downloads *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Release $env:RELEASE_TAG already exists; refusing to overwrite a versioned update." }
+          $notes = @"
+          ESTUDEX v1.9.3 — Hotfix 26 Room UX
+
+          Revisão técnica 1.9.30, construída diretamente sobre o Hotfix 25 publicado e verificado.
+
+          Correções:
+          - corrige o falso aviso de transmissão sem resposta no preview local do anfitrião;
+          - adiciona o botão explícito “Encerrar transmissão” enquanto o próprio usuário compartilha a tela;
+          - impede salas recentes locais antigas de piscarem durante a restauração da sessão cloud;
+          - mostra a Tag Pública com @ apenas na apresentação visual, sem alterar o username salvo;
+          - adiciona fechamento consistente por ESC para modais fecháveis, incluindo Encontrar pessoas;
+          - preserva login/Guest do Hotfix 25 e os assets canônicos Home V10.10.
+
+          Backend validado: ESTUDEX Server v0.3.2 / Back4App Parse
+          Produto: ESTUDEX v1.9.3
+          Revisão técnica: 1.9.30
+          Base verificada: v1.9.29-hotfix25
+
+          SHA-256 do instalador:
+          $env:SETUP_SHA256
+          "@
+          Set-Content -Path release-notes-hotfix26.txt -Value $notes -Encoding utf8
+          gh release create $env:RELEASE_TAG 'dist/ESTUDEX-Setup.exe' 'dist/BLAZERX-Setup.exe' --repo Kodezinho22/BLAZERX-Downloads --target main --title 'ESTUDEX v1.9.3 — Hotfix 26 Room UX' --notes-file release-notes-hotfix26.txt --latest
