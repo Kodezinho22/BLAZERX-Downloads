@@ -1,0 +1,69 @@
+name: Compare H12 vs H17 discovery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/inspect-h12-vs-h17-discovery.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Recover both published apps
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          function Recover($tag,$nupkgName,$out){
+            New-Item -ItemType Directory -Force -Path "$out-setup","$out-nupkg",$out | Out-Null
+            gh release download $tag --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe' --dir "$out-setup"
+            $setup=Join-Path "$out-setup" 'ESTUDEX-Setup.exe'
+            & 7z x $setup "-o$out-setup/extracted" -y | Out-Null
+            $pkg=Get-ChildItem "$out-setup/extracted" -Recurse -Filter $nupkgName | Select-Object -First 1
+            if(-not $pkg){throw "$tag nupkg missing"}
+            & 7z x $pkg.FullName "-o$out-nupkg" -y | Out-Null
+            $asar=Get-ChildItem "$out-nupkg" -Recurse -Filter app.asar | Select-Object -First 1
+            if(-not $asar){throw "$tag asar missing"}
+            npx --yes @electron/asar extract $asar.FullName $out
+          }
+          Recover 'v1.9.16-hotfix12' 'blazerx-1.9.16-full.nupkg' 'h12'
+          Recover 'v1.9.21-hotfix17' 'blazerx-1.9.21-full.nupkg' 'h17'
+      - name: Compare Radmin discovery and LAN code
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $patterns=@(
+            'ESTUDEX_RADMIN_DIRECTORY_V170',
+            'ESTUDEX_LAN_PRESENCE_V172',
+            'estudexBrowseRadminUsersV170',
+            'estudexLanSnapshotV172',
+            'estudexLanStartV172',
+            'socialDiscoveryResponderV112',
+            'discoveryBroadcastsV112',
+            '/api/social/lan-peers',
+            '/api/social/search',
+            'estudexDirectIdentifyV170',
+            'ESTUDEX_V187_VERIFIED_LAN_IDENTITY',
+            'ESTUDEX_V193_HOTFIX15_PROOF_HYBRID_PRESENCE',
+            'ESTUDEX_V193_HOTFIX16_RADMIN_MEMBER_CANDIDATES',
+            'ESTUDEX_V193_HOTFIX17_AUTHORITATIVE_PRESENCE'
+          )
+          foreach($p in $patterns){
+            Write-Host "===== H12: $p ====="
+            Select-String -Path 'h12/server.js' -Pattern $p -SimpleMatch -Context 8,80 | Select-Object -First 3 | ForEach-Object { $_.Context.PreContext; $_.Line; $_.Context.PostContext; '---' }
+            Write-Host "===== H17: $p ====="
+            Select-String -Path 'h17/server.js' -Pattern $p -SimpleMatch -Context 8,80 | Select-Object -First 3 | ForEach-Object { $_.Context.PreContext; $_.Line; $_.Context.PostContext; '---' }
+          }
+          Write-Host '===== HASHES ====='
+          Get-FileHash h12/server.js,h17/server.js,h12/public/estudex-engine.js,h17/public/estudex-engine.js -Algorithm SHA256 | Format-Table -AutoSize
