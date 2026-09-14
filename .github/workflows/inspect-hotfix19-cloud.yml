@@ -1,0 +1,59 @@
+name: Inspect Hotfix 19 cloud signaling
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/inspect-hotfix19-cloud.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Recover Hotfix 19 app
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download v1.9.23-hotfix19 --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          New-Item -ItemType Directory -Force -Path setup,nupkg,app | Out-Null
+          & 7z x 'ESTUDEX-Setup.exe' '-osetup' -y | Out-Null
+          $pkg = Get-ChildItem setup -Recurse -Filter 'blazerx-1.9.23-full.nupkg' | Select-Object -First 1
+          if (-not $pkg) { throw 'nupkg missing' }
+          & 7z x $pkg.FullName '-onupkg' -y | Out-Null
+          $asar = Get-ChildItem nupkg -Recurse -Filter 'app.asar' | Select-Object -First 1
+          if (-not $asar) { throw 'app.asar missing' }
+          npx --yes @electron/asar extract $asar.FullName app
+      - name: Inspect signaling and room anchors
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $targets = @('app/public/estudex-engine.js','app/public/app.js','app/main.js','app/server.js') | Where-Object { Test-Path $_ }
+          $patterns = @(
+            'signalingBase','WebSocket','RTCPeerConnection','api/ice','create-room','join-room','room-created','room-joined',
+            'createRoom','joinRoom','roomId','role =','let role','signal','viewer','hostEndpoint','estudexOwnEndpoint',
+            'Copiar convite','roomCode','invite','startShare','estudexCreateMediaPeer'
+          )
+          foreach ($file in $targets) {
+            Write-Host "===== FILE $file ====="
+            $lines = Get-Content $file
+            foreach ($pattern in $patterns) {
+              $matches = Select-String -Path $file -Pattern $pattern -SimpleMatch | Select-Object -First 8
+              foreach ($m in $matches) {
+                $start = [Math]::Max(0, $m.LineNumber - 8)
+                $end = [Math]::Min($lines.Count - 1, $m.LineNumber + 10)
+                Write-Host "--- $pattern @ line $($m.LineNumber) ---"
+                for ($i=$start; $i -le $end; $i++) { Write-Host (("{0,6}: {1}" -f ($i+1), $lines[$i])) }
+              }
+            }
+          }
