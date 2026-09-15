@@ -18,14 +18,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Recover Hotfix 28 client and inspect live network flows
+      - name: Recover Hotfix 28 client
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           gh release download v1.9.32-hotfix28 --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
-          New-Item -ItemType Directory -Force -Path setup,nupkg,app | Out-Null
+          New-Item -ItemType Directory -Force -Path setup,nupkg,app,inspection | Out-Null
           & 7z x 'ESTUDEX-Setup.exe' '-osetup' -y | Out-Null
           $pkg = Get-ChildItem setup -Recurse -Filter 'blazerx-1.9.32-full.nupkg' | Select-Object -First 1
           if (-not $pkg) { throw 'Hotfix 28 nupkg not found.' }
@@ -33,31 +33,15 @@ jobs:
           $asar = Get-ChildItem nupkg -Recurse -Filter 'app.asar' | Select-Object -First 1
           if (-not $asar) { throw 'Hotfix 28 app.asar not found.' }
           npx --yes @electron/asar extract $asar.FullName app
-
-          function Dump-Matches($title, $patterns) {
-            Write-Host "===== $title ====="
-            Get-ChildItem app/public -Recurse -File -Include *.js,*.html | ForEach-Object {
-              Select-String -Path $_.FullName -Pattern $patterns -Context 12,20 -ErrorAction SilentlyContinue
-            } | Select-Object -First 160 | ForEach-Object {
-              Write-Host ("--- {0}:{1}" -f $_.Path,$_.LineNumber)
-              $_.Context.PreContext | ForEach-Object { Write-Host $_ }
-              Write-Host ('>>> ' + $_.Line)
-              $_.Context.PostContext | ForEach-Object { Write-Host $_ }
-            }
-          }
-
-          Dump-Matches 'PEOPLE SEARCH / ABORT / FRIEND REQUEST' @(
-            'AbortController','aborted a request','AbortError','users/search','searchUsers','friends/requests','receiverId','addFriendResults','data-invite-detected','debounce'
-          )
-
-          Dump-Matches 'ROOM JOIN / TIMEOUT / SOCKET' @(
-            'Tempo esgotado ao entrar na sala','entrar na sala','join-room','joinRoom','room:join','socket.emit','socket.on','connect_error','disconnect','reconnect','room-code','roomCode'
-          )
-
-          Dump-Matches 'STREAM NEGOTIATION / P2P' @(
-            'Conectando à tela','RTCPeerConnection','createOffer','createAnswer','icecandidate','addIceCandidate','track','peer','watch','viewer','host','screen-share','screenShare'
-          )
-
-          Dump-Matches 'SAVED ROOMS / ONLINE OFFLINE STATUS' @(
-            'Salas salvas','savedRooms','saved rooms','Offline','offline','online','roomStatus','liveRooms','recentRooms','room-state','roomState'
-          )
+          Copy-Item app/package.json inspection/package.json
+          Copy-Item app/forge.config.js inspection/forge.config.js
+          if (Test-Path app/estudex-hotfix28-manifest.json) { Copy-Item app/estudex-hotfix28-manifest.json inspection/estudex-hotfix28-manifest.json }
+          New-Item -ItemType Directory -Force -Path inspection/public | Out-Null
+          Copy-Item app/public/* inspection/public/ -Recurse
+      - name: Upload recovered Hotfix 28 source
+        uses: actions/upload-artifact@v4
+        with:
+          name: estudex-hotfix28-recovered-source
+          path: inspection
+          retention-days: 2
+          if-no-files-found: error
