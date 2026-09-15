@@ -1,0 +1,154 @@
+name: Publish ESTUDEX v1.9.3 Hotfix 33 Single Room
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/prepare-estudex-v1.9.3-hotfix33.yml'
+      - 'hotfixes/v1.9.37-hotfix33/**'
+
+permissions:
+  contents: write
+
+jobs:
+  build-publish:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      BASE_TAG: v1.9.36-hotfix32
+      RELEASE_TAG: v1.9.37-hotfix33
+      BASE_SETUP_SHA256: 833a588cdb63ca18ace1b09876efe9cb2887eaa97207f03025449da27f27b1dd
+      BACKEND_BASE: https://site--estudex-server--bs292kkyk4sm.code.run
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify backend room directory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          (async()=>{
+            const base=process.env.BACKEND_BASE;
+            const h=await (await fetch(base+'/health',{cache:'no-store'})).json();
+            if(!h.ok||h.version!=='0.3.8')throw new Error('ESTUDEX backend 0.3.8 is not ready');
+            const r=await fetch(base+'/api/rooms/live',{cache:'no-store'}),d=await r.json();
+            if(!r.ok||d.ok!==true||!Array.isArray(d.rooms))throw new Error('Live room directory unavailable');
+            const seen=new Set();
+            for(const room of d.rooms){if(room.hostUserId){if(seen.has(room.hostUserId))throw new Error('Backend returned duplicate active host '+room.hostUserId);seen.add(room.hostUserId)}}
+            console.log('Backend room directory OK',d.rooms.length);
+          })().catch(e=>{console.error(e);process.exit(1)});
+          '@ | Set-Content verify-h33.cjs -Encoding utf8
+          node verify-h33.cjs
+
+      - name: Download Hotfix32 baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release download $env:BASE_TAG --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          $hash=(Get-FileHash ESTUDEX-Setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($hash -ne $env:BASE_SETUP_SHA256){throw "Hotfix32 baseline SHA mismatch: $hash"}
+
+      - name: Recover Hotfix32 application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path setup,nupkg,app | Out-Null
+          & 7z x ESTUDEX-Setup.exe '-osetup' -y | Out-Null
+          $pkg=Get-ChildItem setup -Recurse -Filter 'blazerx-1.9.36-full.nupkg' | Select-Object -First 1
+          if(-not $pkg){throw 'Hotfix32 nupkg missing'}
+          & 7z x $pkg.FullName '-onupkg' -y | Out-Null
+          $asar=Get-ChildItem nupkg -Recurse -Filter app.asar | Select-Object -First 1
+          if(-not $asar){throw 'Hotfix32 app.asar missing'}
+          npx --yes @electron/asar extract $asar.FullName app
+          node hotfixes/v1.9.36-hotfix32/contract.cjs app
+          $hjs=(Get-FileHash app/public/js/home.js -Algorithm SHA256).Hash.ToLowerInvariant()
+          $hcss=(Get-FileHash app/public/css/home.css -Algorithm SHA256).Hash.ToLowerInvariant()
+          "BASE_HOME_JS=$hjs" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "BASE_HOME_CSS=$hcss" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Apply Hotfix33
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          node hotfixes/v1.9.37-hotfix33/patch.cjs app
+          node --check app/public/js/estudex-engine-socket-compat.js
+          node --check app/public/estudex-engine.js
+          node --check app/public/js/estudex-v193-cloud-social-v1926.js
+          node hotfixes/v1.9.37-hotfix33/contract.cjs app
+          $hjs=(Get-FileHash app/public/js/home.js -Algorithm SHA256).Hash.ToLowerInvariant()
+          $hcss=(Get-FileHash app/public/css/home.css -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($hjs -ne $env:BASE_HOME_JS){throw 'Canonical home.js changed'}
+          if($hcss -ne $env:BASE_HOME_CSS){throw 'Canonical home.css changed'}
+
+      - name: Install dependencies
+        shell: pwsh
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Build technical revision 1.9.37
+        shell: pwsh
+        working-directory: app
+        run: npx electron-forge make --platform=win32 --arch=x64
+
+      - name: Verify package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path dist,verify-nupkg,verify-app | Out-Null
+          $setup=Get-ChildItem app/out/make -Recurse -Filter 'ESTUDEX-Setup.exe' | Select-Object -First 1
+          $pkg=Get-ChildItem app/out/make -Recurse -Filter 'blazerx-1.9.37-full.nupkg' | Select-Object -First 1
+          if(-not $setup -or -not $pkg){throw 'Hotfix33 build outputs missing'}
+          Copy-Item $setup.FullName dist/ESTUDEX-Setup.exe -Force
+          Copy-Item $setup.FullName dist/BLAZERX-Setup.exe -Force
+          Copy-Item $pkg.FullName dist/blazerx-1.9.37-full.nupkg -Force
+          & 7z x $pkg.FullName '-overify-nupkg' -y | Out-Null
+          $asar=Get-ChildItem verify-nupkg -Recurse -Filter app.asar | Select-Object -First 1
+          npx --yes @electron/asar extract $asar.FullName verify-app
+          node hotfixes/v1.9.37-hotfix33/contract.cjs verify-app
+          $hash=(Get-FileHash dist/ESTUDEX-Setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "SETUP_SHA256=$hash" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Hotfix33 SHA-256: $hash"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESTUDEX-v1.9.3-Hotfix33-Single-Room
+          path: |
+            dist/ESTUDEX-Setup.exe
+            dist/BLAZERX-Setup.exe
+            dist/blazerx-1.9.37-full.nupkg
+          retention-days: 14
+
+      - name: Publish Hotfix33
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release view $env:RELEASE_TAG --repo Kodezinho22/BLAZERX-Downloads *> $null
+          if($LASTEXITCODE -eq 0){throw "Release $env:RELEASE_TAG already exists"}
+          $notes=@"
+          ESTUDEX v1.9.3 — Hotfix 33 Single Room
+
+          Revisão técnica 1.9.37, construída sobre o Hotfix 32 publicado.
+
+          Correção principal:
+          - o overlay otimista do cliente não acumula mais salas antigas do mesmo host como AO VIVO;
+          - ao ativar uma nova sala hospedada, pins locais anteriores do mesmo usuário são removidos e marcados como substituídos;
+          - a janela de tolerância local da sala anterior também é descartada, impedindo cards fantasmas em Salas ao vivo e Minhas salas;
+          - o servidor continua sendo a autoridade e já foi validado separadamente criando A → B → C → D com o mesmo usuário, mantendo exatamente uma sala ativa.
+
+          Persistência atual: Supabase.
+          Backend validado: ESTUDEX Server 0.3.8.
+          Produto: ESTUDEX v1.9.3
+          Revisão técnica: 1.9.37
+          Base: v1.9.36-hotfix32
+          SHA-256: $env:SETUP_SHA256
+          "@
+          Set-Content release-notes-hotfix33.txt $notes -Encoding utf8
+          gh release create $env:RELEASE_TAG dist/ESTUDEX-Setup.exe dist/BLAZERX-Setup.exe --repo Kodezinho22/BLAZERX-Downloads --target main --title 'ESTUDEX v1.9.3 — Hotfix 33 Single Room' --notes-file release-notes-hotfix33.txt --latest
