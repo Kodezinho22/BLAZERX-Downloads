@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Verify live ESTUDEX backend 0.3.8
+      - name: Verify live ESTUDEX backend 0.3.7+
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -37,16 +37,18 @@ jobs:
           const sleep=ms=>new Promise(r=>setTimeout(r,ms));
           (async()=>{
             let health=null;
-            for(let i=1;i<=30;i++){
+            for(let i=1;i<=8;i++){
               try{
                 const r=await fetch(base+'/health',{cache:'no-store'});const d=await r.json();
-                if(r.ok&&d.ok&&d.version==='0.3.8'&&d.socialPersistence==='parse'){health=d;break;}
+                if(r.ok&&d.ok&&['0.3.7','0.3.8'].includes(d.version)&&d.socialPersistence==='parse'){health=d;break;}
                 console.log('backend not ready',i,d.version,d.socialPersistence);
               }catch(e){console.log('health failed',i,e.message)}
-              await sleep(10000);
+              await sleep(5000);
             }
-            if(!health)throw new Error('Backend 0.3.8 + Parse did not become ready');
-            console.log('Backend Hotfix32 ready:',health.version,'rooms=',health.rooms);
+            if(!health)throw new Error('Backend 0.3.7+ + Parse did not become ready');
+            const liveRes=await fetch(base+'/api/rooms/live',{cache:'no-store'});const live=await liveRes.json();
+            if(!liveRes.ok||live.ok!==true||!Array.isArray(live.rooms))throw new Error('Live room directory unavailable');
+            console.log('Backend ready:',health.version,'rooms=',health.rooms,'directory=',live.rooms.length);
           })().catch(e=>{console.error(e);process.exit(1)});
           '@ | Set-Content verify-backend-hotfix32.cjs -Encoding utf8
           node verify-backend-hotfix32.cjs
@@ -161,15 +163,17 @@ jobs:
           Revisão técnica 1.9.36, construída diretamente sobre o Hotfix 31 publicado e verificado.
 
           Mudanças principais:
-          - criação de sala responde imediatamente na interface com proteção contra clique duplicado;
+          - criação de sala responde imediatamente na interface e bloqueia clique duplicado durante a criação;
           - primeira tentativa de reconnect é imediata, removendo a espera artificial de 650 ms;
-          - voltar para uma sala já conectada continua usando o fast path local, sem recriar a conexão;
-          - lista de salas salvas usa status inline do backend e elimina uma requisição extra por sala;
-          - criação/reconnect reduz validações remotas repetidas de sessão no Back4App;
-          - backend mantém no máximo uma sala hospedada ativa por usuário autenticado; nova sala substitui a anterior;
-          - preserva o Hotfix 31, a identidade simples por @usuário e o home.js/home.css canônico V10.10.
+          - uma conexão nova não executa um leave desnecessário quando não existe sala/socket ativo;
+          - voltar para a sala já conectada continua usando o fast path local, sem reconstruir a conexão;
+          - lista de salas salvas não faz mais uma consulta de status por sala; em backend 0.3.7 usa uma única consulta ao diretório ao vivo e 0.3.8 suporta status inline;
+          - sessão/@ já salvo não é apagado por timeout, rede ou erro temporário do backend na inicialização;
+          - backend 0.3.7+ mantém no máximo uma sala hospedada ativa por usuário autenticado; nova sala substitui a anterior;
+          - preserva o Hotfix 31 e o home.js/home.css canônico V10.10.
 
-          Backend validado no build: ESTUDEX Server v0.3.8 / Back4App Parse
+          Backend mínimo validado no build: ESTUDEX Server v0.3.7 / Back4App Parse
+          Backend 0.3.8 já contém otimizações adicionais de sessão/status e é compatível com este cliente.
           Produto: ESTUDEX v1.9.3
           Revisão técnica: 1.9.36
           Base verificada: v1.9.35-hotfix31
