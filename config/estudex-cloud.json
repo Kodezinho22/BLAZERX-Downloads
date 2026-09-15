@@ -1,6 +1,6 @@
 {
   "backendBase": "https://site--estudex-server--bs292kkyk4sm.code.run",
-  "serverVersion": "0.3.0",
-  "channel": "hotfix22-cloud-social-test",
+  "serverVersion": "0.3.4",
+  "channel": "hotfix30-auth-room-stability",
   "updatedAt": "2026-09-14"
 }
