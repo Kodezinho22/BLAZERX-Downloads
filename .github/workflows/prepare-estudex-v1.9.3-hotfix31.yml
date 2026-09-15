@@ -1,0 +1,187 @@
+name: Publish ESTUDEX v1.9.3 Hotfix 31 Simple Handle
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/prepare-estudex-v1.9.3-hotfix31.yml'
+      - 'hotfixes/v1.9.35-hotfix31/**'
+
+permissions:
+  contents: write
+
+jobs:
+  build-publish:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      BASE_TAG: v1.9.34-hotfix30
+      RELEASE_TAG: v1.9.35-hotfix31
+      BASE_SETUP_SHA256: b3d7b9667901549eb96fb9d1b6c8a32248202c18f93a905fd4be0f4729873942
+      BACKEND_BASE: https://site--estudex-server--bs292kkyk4sm.code.run
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify live ESTUDEX backend 0.3.5 and quick identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          const base=process.env.BACKEND_BASE;
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          (async()=>{
+            let health=null;
+            for(let i=1;i<=24;i++){
+              try{
+                const r=await fetch(base+'/health',{cache:'no-store'});const d=await r.json();
+                if(r.ok&&d.ok&&d.version==='0.3.5'&&d.socialPersistence==='parse'){health=d;break;}
+                console.log('backend not ready',i,d.version,d.socialPersistence);
+              }catch(e){console.log('health failed',i,e.message)}
+              await sleep(10000);
+            }
+            if(!health)throw new Error('Backend 0.3.5 + Parse did not become ready');
+            const invalid=await fetch(base+'/api/auth/quick',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'@'})});
+            const body=await invalid.json().catch(()=>({}));
+            if(invalid.status!==400||body.code!=='handle_too_short')throw new Error('Quick @ identity route is not ready');
+            console.log('Backend Hotfix31 ready:',health.version,'quick=',invalid.status,body.code);
+          })().catch(e=>{console.error(e);process.exit(1)});
+          '@ | Set-Content verify-backend-hotfix31.cjs -Encoding utf8
+          node verify-backend-hotfix31.cjs
+
+      - name: Download and verify Hotfix 30 baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release download $env:BASE_TAG --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          $hash=(Get-FileHash 'ESTUDEX-Setup.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($hash -ne $env:BASE_SETUP_SHA256){throw "Hotfix30 baseline SHA mismatch: $hash"}
+          Write-Host "Verified Hotfix30 installer: $hash"
+
+      - name: Recover exact published Hotfix 30 application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path base-setup,base-nupkg,app | Out-Null
+          & 7z x 'ESTUDEX-Setup.exe' '-obase-setup' -y | Out-Null
+          $nupkg=Get-ChildItem base-setup -Recurse -Filter 'blazerx-1.9.34-full.nupkg' | Select-Object -First 1
+          if(-not $nupkg){throw 'Hotfix30 nupkg not found'}
+          & 7z x $nupkg.FullName '-obase-nupkg' -y | Out-Null
+          $asar=Get-ChildItem base-nupkg -Recurse -Filter app.asar | Select-Object -First 1
+          if(-not $asar){throw 'Hotfix30 app.asar not found'}
+          npx --yes @electron/asar extract $asar.FullName app
+          node hotfixes/v1.9.34-hotfix30/contract.cjs app
+          $baseHomeJs=(Get-FileHash 'app/public/js/home.js' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $baseHomeCss=(Get-FileHash 'app/public/css/home.css' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "BASE_HOME_JS=$baseHomeJs" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "BASE_HOME_CSS=$baseHomeCss" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Apply Hotfix 31 simple handle and native cloud patch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          node hotfixes/v1.9.35-hotfix31/patch.cjs app
+          node --check app/public/js/estudex-v193-cloud-social-v1926.js
+          node --check app/public/estudex-engine.js
+          node --check app/public/js/estudex-engine-socket-compat.js
+          node --check app/public/js/home.js
+          node --check app/main.js
+          node --check app/preload.js
+          node hotfixes/v1.9.35-hotfix31/contract.cjs app
+          $homeJs=(Get-FileHash 'app/public/js/home.js' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $homeCss=(Get-FileHash 'app/public/css/home.css' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($homeJs -ne $env:BASE_HOME_JS){throw 'Canonical V10.10 home.js changed'}
+          if($homeCss -ne $env:BASE_HOME_CSS){throw 'Canonical V10.10 home.css changed'}
+
+      - name: Install build dependencies
+        shell: pwsh
+        working-directory: app
+        run: |
+          $ErrorActionPreference='Stop'
+          if(Test-Path node_modules){Remove-Item node_modules -Recurse -Force}
+          npm install --no-audit --no-fund
+
+      - name: Build ESTUDEX technical revision 1.9.35
+        shell: pwsh
+        working-directory: app
+        run: |
+          $ErrorActionPreference='Stop'
+          npx electron-forge make --platform=win32 --arch=x64
+
+      - name: Verify final Hotfix 31 package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path dist,verify-nupkg,verify-app | Out-Null
+          $setup=Get-ChildItem 'app/out/make' -Recurse -Filter 'ESTUDEX-Setup.exe' | Select-Object -First 1
+          $nupkg=Get-ChildItem 'app/out/make' -Recurse -Filter 'blazerx-1.9.35-full.nupkg' | Select-Object -First 1
+          if(-not $setup){throw 'ESTUDEX-Setup.exe was not generated'}
+          if(-not $nupkg){throw 'blazerx-1.9.35-full.nupkg was not generated'}
+          Copy-Item $setup.FullName 'dist/ESTUDEX-Setup.exe' -Force
+          Copy-Item $setup.FullName 'dist/BLAZERX-Setup.exe' -Force
+          Copy-Item $nupkg.FullName 'dist/blazerx-1.9.35-full.nupkg' -Force
+          & 7z x $nupkg.FullName '-overify-nupkg' -y | Out-Null
+          $asar=Get-ChildItem verify-nupkg -Recurse -Filter app.asar | Select-Object -First 1
+          if(-not $asar){throw 'Final app.asar missing'}
+          npx --yes @electron/asar extract $asar.FullName verify-app
+          node hotfixes/v1.9.35-hotfix31/contract.cjs verify-app
+          $homeJs=(Get-FileHash 'verify-app/public/js/home.js' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $homeCss=(Get-FileHash 'verify-app/public/css/home.css' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($homeJs -ne $env:BASE_HOME_JS){throw 'Packaged V10.10 home.js changed'}
+          if($homeCss -ne $env:BASE_HOME_CSS){throw 'Packaged V10.10 home.css changed'}
+          $setupHash=(Get-FileHash 'dist/ESTUDEX-Setup.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "SETUP_SHA256=$setupHash" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "ESTUDEX Hotfix31 installer SHA-256: $setupHash"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESTUDEX-v1.9.3-Hotfix31-Simple-Handle
+          path: |
+            dist/ESTUDEX-Setup.exe
+            dist/BLAZERX-Setup.exe
+            dist/blazerx-1.9.35-full.nupkg
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Publish ESTUDEX v1.9.3 Hotfix 31
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release view $env:RELEASE_TAG --repo Kodezinho22/BLAZERX-Downloads *> $null
+          if($LASTEXITCODE -eq 0){throw "Release $env:RELEASE_TAG already exists; refusing to overwrite"}
+          $notes=@"
+          ESTUDEX v1.9.3 — Hotfix 31 Simple @ Identity
+
+          Revisão técnica 1.9.35, construída diretamente sobre o Hotfix 30 publicado e verificado.
+
+          Mudanças principais:
+          - remove da primeira tela os fluxos visíveis de Login, Criar conta, Visitante, e-mail e senha;
+          - primeira abertura pede somente um @usuário único e salva a sessão neste PC;
+          - busca de amigos passa a ser apresentada somente por @usuário, com botão Adicionar amigo;
+          - IDs internos do Parse continuam existindo só por baixo dos panos e não são identidade pública;
+          - desativa a interface antiga de converter Guest em conta;
+          - tráfego REST do ESTUDEX passa por uma ponte HTTPS no processo principal do Electron, evitando falhas de fetch/CORS do renderer;
+          - usa um único backend oficial, sem loop de health/fallback no renderer;
+          - sessões já existentes continuam funcionando, mas a interface mostra somente o @usuário;
+          - preserva o Hotfix 30, as proteções de salas e o home.js/home.css canônico V10.10.
+
+          Backend validado no build: ESTUDEX Server v0.3.5 / Back4App Parse
+          Produto: ESTUDEX v1.9.3
+          Revisão técnica: 1.9.35
+          Base verificada: v1.9.34-hotfix30
+
+          SHA-256 do instalador:
+          $env:SETUP_SHA256
+          "@
+          Set-Content release-notes-hotfix31.txt $notes -Encoding utf8
+          gh release create $env:RELEASE_TAG 'dist/ESTUDEX-Setup.exe' 'dist/BLAZERX-Setup.exe' --repo Kodezinho22/BLAZERX-Downloads --target main --title 'ESTUDEX v1.9.3 — Hotfix 31 Simple @ Identity' --notes-file release-notes-hotfix31.txt --latest
