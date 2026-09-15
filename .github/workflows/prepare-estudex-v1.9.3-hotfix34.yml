@@ -1,0 +1,141 @@
+name: Publish ESTUDEX v1.9.3 Hotfix 34 Latency Firewall
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/prepare-estudex-v1.9.3-hotfix34.yml'
+      - 'hotfixes/v1.9.38-hotfix34/**'
+
+permissions:
+  contents: write
+
+jobs:
+  build-publish:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      BASE_TAG: v1.9.37-hotfix33
+      RELEASE_TAG: v1.9.38-hotfix34
+      BASE_SETUP_SHA256: 7dad18bee4a86aa507a5581da8deb510987aac136933885a387fec2f67878453
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Ensure release tag is new
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release view $env:RELEASE_TAG --repo Kodezinho22/BLAZERX-Downloads *> $null
+          if($LASTEXITCODE -eq 0){throw "Release $env:RELEASE_TAG already exists"}
+          exit 0
+
+      - name: Download Hotfix33 baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release download $env:BASE_TAG --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          $hash=(Get-FileHash ESTUDEX-Setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($hash -ne $env:BASE_SETUP_SHA256){throw "Hotfix33 baseline SHA mismatch: $hash"}
+
+      - name: Recover Hotfix33 application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path setup,nupkg,app | Out-Null
+          & 7z x ESTUDEX-Setup.exe '-osetup' -y | Out-Null
+          $pkg=Get-ChildItem setup -Recurse -Filter 'blazerx-1.9.37-full.nupkg' | Select-Object -First 1
+          if(-not $pkg){throw 'Hotfix33 nupkg missing'}
+          & 7z x $pkg.FullName '-onupkg' -y | Out-Null
+          $asar=Get-ChildItem nupkg -Recurse -Filter app.asar | Select-Object -First 1
+          if(-not $asar){throw 'Hotfix33 app.asar missing'}
+          npx --yes @electron/asar extract $asar.FullName app
+          node hotfixes/v1.9.37-hotfix33/contract.cjs app
+
+      - name: Apply Hotfix34
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          node hotfixes/v1.9.38-hotfix34/patch.cjs app
+          node --check app/main.js
+          node --check app/public/js/home.js
+          node --check app/public/js/estudex-engine-socket-compat.js
+          node --check app/public/estudex-engine.js
+          node --check app/public/js/estudex-v193-cloud-social-v1926.js
+          node hotfixes/v1.9.38-hotfix34/contract.cjs app
+
+      - name: Install dependencies
+        shell: pwsh
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Build technical revision 1.9.38
+        shell: pwsh
+        working-directory: app
+        run: npx electron-forge make --platform=win32 --arch=x64
+
+      - name: Verify package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path dist,verify-nupkg,verify-app | Out-Null
+          $setup=Get-ChildItem app/out/make -Recurse -Filter 'ESTUDEX-Setup.exe' | Select-Object -First 1
+          $pkg=Get-ChildItem app/out/make -Recurse -Filter 'blazerx-1.9.38-full.nupkg' | Select-Object -First 1
+          if(-not $setup -or -not $pkg){throw 'Hotfix34 build outputs missing'}
+          Copy-Item $setup.FullName dist/ESTUDEX-Setup.exe -Force
+          Copy-Item $setup.FullName dist/BLAZERX-Setup.exe -Force
+          Copy-Item $pkg.FullName dist/blazerx-1.9.38-full.nupkg -Force
+          & 7z x $pkg.FullName '-overify-nupkg' -y | Out-Null
+          $asar=Get-ChildItem verify-nupkg -Recurse -Filter app.asar | Select-Object -First 1
+          if(-not $asar){throw 'Hotfix34 app.asar missing'}
+          npx --yes @electron/asar extract $asar.FullName verify-app
+          node hotfixes/v1.9.38-hotfix34/contract.cjs verify-app
+          $hash=(Get-FileHash dist/ESTUDEX-Setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "SETUP_SHA256=$hash" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Hotfix34 SHA-256: $hash"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESTUDEX-v1.9.3-Hotfix34-Latency-Firewall
+          path: |
+            dist/ESTUDEX-Setup.exe
+            dist/BLAZERX-Setup.exe
+            dist/blazerx-1.9.38-full.nupkg
+          retention-days: 14
+
+      - name: Publish Hotfix34
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release view $env:RELEASE_TAG --repo Kodezinho22/BLAZERX-Downloads *> $null
+          if($LASTEXITCODE -eq 0){throw "Release $env:RELEASE_TAG already exists"}
+          $notes=@"
+          ESTUDEX v1.9.3 — Hotfix 34 Latency + Firewall
+
+          Revisão técnica 1.9.38, construída sobre o Hotfix 33 publicado.
+
+          Correções:
+          - navegação para uma sala já conectada deixa o Chromium pintar a troca de tela antes da reconciliação pesada da sala;
+          - pedidos de renderização vindos de showPage, room:joined e room:state são agrupados, removendo renders completos síncronos duplicados;
+          - o servidor HTTP/WebSocket interno da interface agora escuta somente em 127.0.0.1:8787, em vez de expor a porta em 0.0.0.0;
+          - isso elimina o listener de entrada legado que fazia o Windows Firewall reenquadrar cada executável versionado do Squirrel como um novo aplicativo de rede;
+          - o Hotfix 33 de uma única sala hospedada por usuário permanece preservado;
+          - sinalização de salas continua pelo endpoint oficial em nuvem e persistência continua no Supabase.
+
+          Produto: ESTUDEX v1.9.3
+          Revisão técnica: 1.9.38
+          Base: v1.9.37-hotfix33
+          SHA-256: $env:SETUP_SHA256
+          "@
+          Set-Content release-notes-hotfix34.txt $notes -Encoding utf8
+          gh release create $env:RELEASE_TAG dist/ESTUDEX-Setup.exe dist/BLAZERX-Setup.exe --repo Kodezinho22/BLAZERX-Downloads --target main --title 'ESTUDEX v1.9.3 — Hotfix 34 Latency + Firewall' --notes-file release-notes-hotfix34.txt --latest
