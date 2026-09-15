@@ -1,0 +1,60 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+/* ESTUDEX_V190_CLEANROOM_PRELOAD_HARD_REPLACEMENT */
+/* ESTUDEX_V190_CLEANROOM_NATIVE_PROFILE_PRELOAD */
+/* ESTUDEX_V190_CLEANROOM_NATIVE_MEDIA_PRELOAD */
+/* ESTUDEX_V190_CLEANROOM_NATIVE_UPDATER_PRELOAD */
+
+const EstudexNative = Object.freeze({
+  profile:Object.freeze({
+    get:() => ipcRenderer.invoke('cleanroom:profile:get'),
+    save:profile => ipcRenderer.invoke('cleanroom:profile:save', profile)
+  }),
+  /* ESTUDEX_V193_SPEC_ACHIEVEMENTS_PRELOAD */
+  achievements:Object.freeze({
+    get:() => ipcRenderer.invoke('estudex:achievements:get'),
+    unlock:id => ipcRenderer.invoke('estudex:achievements:unlock',id)
+  }),
+/* ESTUDEX_V193_SPEC_NOTIFICATIONS_PRELOAD */
+  attention:Object.freeze({
+    flash:enabled => ipcRenderer.invoke('estudex:taskbar-attention-v173',Boolean(enabled))
+  }),
+  /* ESTUDEX_V1010_EXACT_NATIVE_ASSET_PRELOAD */
+  assets:Object.freeze({
+    save:(kind,data,mime) => ipcRenderer.invoke('estudex:asset:save',{kind,data,mime}),
+    load:kind => ipcRenderer.invoke('estudex:asset:load',kind),
+    delete:kind => ipcRenderer.invoke('estudex:asset:delete',kind)
+  }),
+  media:Object.freeze({
+    getCaptureSources:() => ipcRenderer.invoke('cleanroom:capture:get-sources'),
+    pickCaptureSource:() => ipcRenderer.invoke('cleanroom:capture:pick-source')
+  }),
+  network:Object.freeze({
+    ensureOnlineServer:() => ipcRenderer.invoke('network:ensure-online-server')
+  }),
+  /* ESTUDEX_V193_HOTFIX22_SECURE_AUTH_SESSION */
+  authSession:Object.freeze({
+    get:() => ipcRenderer.invoke('estudex:auth-session:get-v1926'),
+    set:token => ipcRenderer.invoke('estudex:auth-session:set-v1926', token),
+    clear:() => ipcRenderer.invoke('estudex:auth-session:clear-v1926')
+  }),
+  /* ESTUDEX_V1010_EXACT_WINDOW_SHELL_PRELOAD */
+  window:Object.freeze({
+    minimize:() => ipcRenderer.invoke('estudex:window:minimize'),
+    toggleMaximize:() => ipcRenderer.invoke('estudex:window:toggle-maximize'),
+    close:() => ipcRenderer.invoke('estudex:window:close')
+  }),
+  updater:Object.freeze({
+    getState:() => ipcRenderer.invoke('cleanroom:update:get-state'),
+    check:() => ipcRenderer.invoke('cleanroom:update:check'),
+    install:() => ipcRenderer.invoke('cleanroom:update:install'),
+    onReady:callback => {
+      if (typeof callback !== 'function') return () => {};
+      const handler = (_event,payload) => { try { callback(payload || {}); } catch {} };
+      ipcRenderer.on('blazerx:update-ready', handler);
+      return () => { try { ipcRenderer.removeListener('blazerx:update-ready', handler); } catch {} };
+    }
+  })
+});
+
+contextBridge.exposeInMainWorld('EstudexNative', EstudexNative);

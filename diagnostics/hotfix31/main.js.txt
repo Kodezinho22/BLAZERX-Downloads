@@ -1,0 +1,2354 @@
+const BLAZERX_SQUIRREL_EVENT = process.argv[1] || '';
+
+// Keep the Add/Remove Programs entry branded with the installed BLAZERX icon.
+// Squirrel installs per-user, so its uninstall entry lives under HKCU.
+if (
+  process.platform === 'win32' &&
+  (
+    BLAZERX_SQUIRREL_EVENT === '--squirrel-install' ||
+    BLAZERX_SQUIRREL_EVENT === '--squirrel-updated'
+  )
+) {
+  try {
+    const { spawnSync } = require('child_process');
+    const squirrelPath = require('path');
+    const installRoot = squirrelPath.resolve(
+      squirrelPath.dirname(process.execPath),
+      '..'
+    );
+    const launcherPath = squirrelPath.join(
+      installRoot,
+      'ESTUDEX.exe'
+    );
+    const uninstallKey =
+      'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\blazerx';
+
+    const query = spawnSync(
+      'reg.exe',
+      ['query', uninstallKey],
+      {
+        windowsHide: true,
+        stdio: 'ignore'
+      }
+    );
+
+    if (query.status === 0) {
+      spawnSync(
+        'reg.exe',
+        [
+          'add',
+          uninstallKey,
+          '/v',
+          'DisplayIcon',
+          '/t',
+          'REG_SZ',
+          '/d',
+          launcherPath + ',0',
+          '/f'
+        ],
+        {
+          windowsHide: true,
+          stdio: 'ignore'
+        }
+      );
+    }
+  } catch {}
+}
+
+if (require('electron-squirrel-startup')) return;
+
+const { app, BrowserWindow, desktopCapturer, ipcMain, shell, nativeImage, screen, safeStorage } = require('electron');
+
+/* ESTUDEX_V1010_EXACT_TRAY_SINGLE_INSTANCE_ICONS */
+const ESTUDEX_PRIMARY_INSTANCE = app.requestSingleInstanceLock();
+if (!ESTUDEX_PRIMARY_INSTANCE) {
+  app.quit();
+  return;
+}
+if (process.platform === 'win32') {
+  try { app.setAppUserModelId('com.estudex.desktop'); } catch {}
+}
+app.on('second-instance', () => {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  } catch {}
+});
+
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const http = require('http');
+const { spawn, spawnSync } = require('child_process');
+const { createShareServer } = require('./server');
+
+/* ESTUDEX_V193_HOTFIX22_SECURE_AUTH_SESSION */
+const ESTUDEX_AUTH_SESSION_FILE_V1926 = () => path.join(app.getPath('userData'), 'estudex-auth-session-v1926.bin');
+ipcMain.handle('estudex:auth-session:get-v1926', async () => {
+  try {
+    const file = ESTUDEX_AUTH_SESSION_FILE_V1926();
+    if (!fs.existsSync(file) || !safeStorage.isEncryptionAvailable()) return { ok:false, token:'' };
+    const token = safeStorage.decryptString(fs.readFileSync(file));
+    return { ok:Boolean(token), token:String(token || '') };
+  } catch { return { ok:false, token:'' }; }
+});
+ipcMain.handle('estudex:auth-session:set-v1926', async (_event, tokenInput) => {
+  try {
+    const token = String(tokenInput || '').trim();
+    if (!token || !safeStorage.isEncryptionAvailable()) return { ok:false };
+    const file = ESTUDEX_AUTH_SESSION_FILE_V1926();
+    fs.mkdirSync(path.dirname(file), { recursive:true });
+    fs.writeFileSync(file, safeStorage.encryptString(token));
+    return { ok:true };
+  } catch { return { ok:false }; }
+});
+ipcMain.handle('estudex:auth-session:clear-v1926', async () => {
+  try { const file=ESTUDEX_AUTH_SESSION_FILE_V1926(); if (fs.existsSync(file)) fs.unlinkSync(file); } catch {}
+  return { ok:true };
+});
+
+/* ESTUDEX_V1010_EXACT_NATIVE_BRANDING */
+const BLAZERX_ICON_PATH = (() => {
+  const estudexIcon = path.join(__dirname, 'resources', 'estudex.ico');
+  const legacyIcon = path.join(__dirname, 'resources', 'blazerx.ico');
+  return fs.existsSync(estudexIcon) ? estudexIcon : legacyIcon;
+})();
+
+const BLAZERX_ICON_DATA = (() => {
+  try {
+    const candidates = [
+      path.join(__dirname, 'resources', 'estudex.png'),
+      path.join(__dirname, 'public', 'assets', 'avatars', 'logo.png')
+    ];
+    const iconPath = candidates.find(candidate => fs.existsSync(candidate));
+    if (!iconPath) return '';
+    return 'data:image/png;base64,' + fs.readFileSync(iconPath).toString('base64');
+  } catch {
+    return '';
+  }
+})();
+
+let mainWindow = null;
+let splashWindow = null;
+let shareServer = null;
+
+// Keep the Windows shell/taskbar identity branded as BLAZERX.
+app.setName('BLAZERX');
+process.title = 'BLAZERX';
+
+if (process.platform === 'win32') {
+  /* ESTUDEX_LEGACY_USER_DATA_V101 */
+  try {
+    const legacyUserData = path.join(app.getPath('appData'), 'blazerx');
+    app.setPath('userData', legacyUserData);
+  } catch {}
+  app.setName('ESTUDEX');
+  process.title = 'ESTUDEX';
+  app.setAppUserModelId('com.estudex.desktop');
+}
+
+function ensureControlPanelBranding() {
+  if (process.platform !== 'win32') return;
+
+  try {
+    const installRoot = path.resolve(
+      path.dirname(process.execPath),
+      '..'
+    );
+    const iconPath = path.join(installRoot, 'app.ico');
+
+    if (!fs.existsSync(iconPath)) return;
+
+    const uninstallRoot =
+      'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall';
+
+    const candidateKeys = [
+      uninstallRoot + '\\blazerx'
+    ];
+
+    const search = spawnSync(
+      'reg.exe',
+      [
+        'query',
+        uninstallRoot,
+        '/s',
+        '/f',
+        'BLAZERX',
+        '/d'
+      ],
+      {
+        windowsHide: true,
+        encoding: 'utf8'
+      }
+    );
+
+    if (search.status === 0 && search.stdout) {
+      for (const line of search.stdout.split(/\r?\n/)) {
+        const key = line.trim();
+        if (
+          key.startsWith('HKEY_CURRENT_USER\\') &&
+          key.toLowerCase().includes('\\uninstall\\') &&
+          !candidateKeys.includes(key)
+        ) {
+          candidateKeys.push(key);
+        }
+      }
+    }
+
+    for (const key of candidateKeys) {
+      const displayName = spawnSync(
+        'reg.exe',
+        ['query', key, '/v', 'DisplayName'],
+        {
+          windowsHide: true,
+          encoding: 'utf8'
+        }
+      );
+
+      if (
+        displayName.status !== 0 ||
+        !/BLAZERX/i.test(displayName.stdout || '')
+      ) {
+        continue;
+      }
+
+      const update = spawnSync(
+        'reg.exe',
+        [
+          'add',
+          key,
+          '/v',
+          'DisplayIcon',
+          '/t',
+          'REG_SZ',
+          '/d',
+          iconPath,
+          '/f'
+        ],
+        {
+          windowsHide: true,
+          stdio: 'ignore'
+        }
+      );
+
+      if (update.status === 0) break;
+    }
+  } catch {}
+}
+
+ensureControlPanelBranding();
+
+async function getSources() {
+  /* ESTUDEX_MULTI_MONITOR_V116 */
+  const [screenSources, windowSources] = await Promise.all([
+    desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: 320, height: 180 },
+      fetchWindowIcons: false
+    }),
+    desktopCapturer.getSources({
+      types: ['window'],
+      thumbnailSize: { width: 320, height: 180 },
+      fetchWindowIcons: true
+    })
+  ]);
+
+  const displays = screen.getAllDisplays();
+  const primary = screen.getPrimaryDisplay();
+  const usedSourceIds = new Set();
+
+  const screenEntries = displays.map((display, index) => {
+    const displayId = String(display.id ?? '');
+    let source = screenSources.find(item =>
+      !usedSourceIds.has(item.id) && String(item.display_id || '') === displayId
+    );
+
+    if (!source) {
+      source = screenSources.find(item =>
+        !usedSourceIds.has(item.id) && String(item.id || '').startsWith('screen:' + index + ':')
+      );
+    }
+
+    if (!source) {
+      source = screenSources.find(item => !usedSourceIds.has(item.id));
+    }
+
+    if (source) usedSourceIds.add(source.id);
+
+    const thumbnail = source?.thumbnail && !source.thumbnail.isEmpty()
+      ? source.thumbnail.toDataURL()
+      : '';
+
+    return {
+      id: source?.id || ('screen:' + index + ':0'),
+      captureIds: [...new Set([
+        source?.id,
+        'screen:' + index + ':0',
+        displayId ? ('screen:' + displayId + ':0') : ''
+      ].filter(Boolean))],
+      name: source?.name || ('Monitor ' + (index + 1)),
+      thumbnail,
+      kind: 'screen',
+      displayId,
+      displayIndex: index,
+      label: 'Monitor ' + (index + 1),
+      width: display.size?.width || display.bounds?.width || 0,
+      height: display.size?.height || display.bounds?.height || 0,
+      x: display.bounds?.x || 0,
+      y: display.bounds?.y || 0,
+      isPrimary: String(display.id) === String(primary?.id),
+      synthetic: !source,
+      detectedByWindows: true
+    };
+  });
+
+  for (const source of screenSources) {
+    if (usedSourceIds.has(source.id)) continue;
+    const index = screenEntries.length;
+    screenEntries.push({
+      id: source.id,
+      captureIds: [source.id],
+      name: source.name,
+      thumbnail: source.thumbnail && !source.thumbnail.isEmpty() ? source.thumbnail.toDataURL() : '',
+      kind: 'screen',
+      displayId: String(source.display_id || ''),
+      displayIndex: index,
+      label: 'Monitor ' + (index + 1),
+      width: 0,
+      height: 0,
+      x: 0,
+      y: 0,
+      isPrimary: false,
+      synthetic: false,
+      detectedByWindows: false
+    });
+  }
+
+  /* ESTUDEX_V190_CLEANROOM_CAPTURE_DEDUPE */
+  const estudexWindowThumbRatioV187 = source => {
+    try {
+      if (!source?.thumbnail || source.thumbnail.isEmpty()) return 0;
+      const bitmap = source.thumbnail.resize({ width:32, height:18, quality:'good' }).toBitmap();
+      if (!bitmap?.length) return 0;
+      let visible = 0;
+      const pixels = Math.floor(bitmap.length / 4);
+      for (let i = 0; i < bitmap.length; i += 4) {
+        const b = bitmap[i] || 0, g = bitmap[i + 1] || 0, r = bitmap[i + 2] || 0;
+        if ((r + g + b) > 42) visible += 1;
+      }
+      return pixels ? visible / pixels : 0;
+    } catch { return 0; }
+  };
+
+  const groupedWindowsV187 = new Map();
+  for (const source of windowSources) {
+    const key = String(source?.name || '').trim().toLocaleLowerCase();
+    if (!key) continue;
+    if (!groupedWindowsV187.has(key)) groupedWindowsV187.set(key, []);
+    groupedWindowsV187.get(key).push({ source, ratio:estudexWindowThumbRatioV187(source) });
+  }
+  const filteredWindowSourcesV187 = [];
+  for (const group of groupedWindowsV187.values()) {
+    const hasHealthyThumbnail = group.some(item => item.ratio >= 0.035);
+    for (const item of group) {
+      if (group.length > 1 && hasHealthyThumbnail && item.ratio <= 0.003) continue;
+      filteredWindowSourcesV187.push(item.source);
+    }
+  }
+
+  const windows = filteredWindowSourcesV187.map(source => ({
+    id: source.id,
+    captureIds: [source.id],
+    name: source.name,
+    thumbnail: source.thumbnail && !source.thumbnail.isEmpty() ? source.thumbnail.toDataURL() : '',
+    kind: 'window',
+    displayId: '',
+    displayIndex: null,
+    label: source.name,
+    width: 0,
+    height: 0,
+    isPrimary: false,
+    synthetic: false,
+    detectedByWindows: false
+  }));
+
+  return [...screenEntries, ...windows];
+}
+
+
+function onlineServerHealthCheck() {
+  return new Promise(resolve => {
+    const request = http.get(
+      'http://127.0.0.1:8787/health',
+      {
+        timeout: 650
+      },
+      response => {
+        response.resume();
+        resolve(
+          response.statusCode >= 200 &&
+          response.statusCode < 500
+        );
+      }
+    );
+
+    request.on(
+      'timeout',
+      () => {
+        request.destroy();
+        resolve(false);
+      }
+    );
+
+    request.on(
+      'error',
+      () => resolve(false)
+    );
+  });
+}
+
+async function waitForOnlineServer({
+  attempts = 16,
+  delay = 250
+} = {}) {
+  for (let index = 0; index < attempts; index += 1) {
+    if (await onlineServerHealthCheck()) {
+      return true;
+    }
+
+    await new Promise(resolve =>
+      setTimeout(resolve, delay)
+    );
+  }
+
+  return false;
+}
+
+async function ensureOnlineServer() {
+  // v1.0.0: the desktop UI server itself is also the Radmin room host.
+  // No second Electron/Node/server process is started anymore.
+  if (!shareServer || shareServer.port !== 8787) {
+    return false;
+  }
+
+  return await onlineServerHealthCheck();
+}
+
+function markLauncherReady() {
+  try {
+    fs.writeFileSync(
+      path.join(
+        os.tmpdir(),
+        'BlazerX.ready'
+      ),
+      String(Date.now()),
+      'utf8'
+    );
+  } catch {}
+}
+
+
+function launcherOwnsSplash() {
+  return (
+    process.env.BLAZERX_EXTERNAL_SPLASH === '1'
+  );
+}
+
+function createSplashWindow() {
+  splashWindow = new BrowserWindow({
+    width: 460,
+    height: 300,
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    movable: true,
+    transparent: false,
+    opacity: 1,
+    backgroundColor: '#0b0e13',
+    alwaysOnTop: true,
+    center: true,
+    show: false,
+    title: 'ESTUDEX',
+    icon: BLAZERX_ICON_PATH,
+    webPreferences: {
+      /* ESTUDEX_V190_CLEANROOM_NATIVE_LIFECYCLE_HARDENING */
+      backgroundThrottling: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false
+    }
+  });
+
+  const splashHtml = `
+    <!doctype html>
+    <html lang="pt-BR">
+      <head>
+        <meta charset="utf-8">
+        <meta
+          name="viewport"
+          content="width=device-width,initial-scale=1"
+        >
+        <style>
+          * { box-sizing: border-box; }
+
+          html,
+          body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+          }
+
+          body {
+            display: grid;
+            place-items: center;
+            color: #f6f7fb;
+            font-family:
+              Inter,
+              system-ui,
+              -apple-system,
+              "Segoe UI",
+              sans-serif;
+            background: #0b0e13;
+            -webkit-app-region: drag;
+            -webkit-user-select: none;
+            user-select: none;
+            cursor: grab;
+          }
+
+          body:active {
+            cursor: grabbing;
+          }
+
+          .card {
+            width: 100%;
+            height: 100%;
+            display: grid;
+            place-content: center;
+            justify-items: center;
+            gap: 12px;
+            border: 1px solid rgba(255,255,255,.055);
+            background: #0b0e13;
+            opacity: 1;
+          }
+
+          .app-loader {
+            position: relative;
+            width: 112px;
+            height: 112px;
+            display: grid;
+            place-items: center;
+          }
+
+          .app-loader::before,
+          .app-loader::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            pointer-events: none;
+          }
+
+          .app-loader::before {
+            border: 3px solid rgba(255,255,255,.075);
+          }
+
+          .app-loader::after {
+            border: 3px solid transparent;
+            border-top-color: #7d88ff;
+            border-right-color: #6f5cff;
+            filter: drop-shadow(0 0 7px rgba(112,95,255,.42));
+            animation: spin .85s linear infinite;
+          }
+
+          .app-icon {
+            width: 76px;
+            height: 76px;
+            object-fit: contain;
+            border-radius: 22px;
+            pointer-events: none;
+            filter:
+              drop-shadow(0 8px 18px rgba(0,0,0,.35))
+              drop-shadow(0 0 18px rgba(88,101,242,.16));
+            animation: iconBreath 1.7s ease-in-out infinite;
+          }
+
+          .brand {
+            margin-top: 2px;
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: .18em;
+            color: #eef0ff;
+          }
+
+          .status {
+            min-height: 18px;
+            color: #949eac;
+            font-size: 12px;
+            font-weight: 650;
+          }
+
+          .status::after {
+            content: "";
+            animation: dots 1.25s steps(4,end) infinite;
+          }
+
+          .drag-hint {
+            margin-top: 2px;
+            color: #525b69;
+            font-size: 10px;
+          }
+
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+
+          @keyframes iconBreath {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.035); }
+          }
+
+          @keyframes dots {
+            0% { content: ""; }
+            25% { content: "."; }
+            50% { content: ".."; }
+            75%, 100% { content: "..."; }
+          }
+        </style>
+      </head>
+
+      <body>
+        <div class="card">
+          <div class="app-loader">
+            <img
+              class="app-icon"
+              src="${BLAZERX_ICON_DATA}"
+              alt="BLAZERX"
+            >
+          </div>
+          <div class="brand">ESTUDEX</div>
+          <div class="status">Iniciando ESTUDEX</div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  splashWindow.loadURL(
+    'data:text/html;charset=UTF-8,' +
+    encodeURIComponent(splashHtml)
+  );
+
+  splashWindow.once(
+    'ready-to-show',
+    () => splashWindow?.show()
+  );
+}
+
+function closeSplash() {
+  if (!splashWindow) return;
+
+  try {
+    splashWindow.close();
+  } catch {}
+
+  splashWindow = null;
+}
+
+async function createWindow() {
+  // v1.0.0: one server only. The same HTTP/WebSocket server that serves
+  // the BLAZERX UI is also the Radmin room host on TCP 8787.
+  // If the app UI opened from this server, the Radmin host is alive too.
+  try {
+    shareServer = await createShareServer({
+      port: 8787,
+      host: '0.0.0.0',
+      uploadDir: path.join(app.getPath('userData'), 'uploads')
+    });
+  } catch (error) {
+    if (error?.code !== 'EADDRINUSE') {
+      throw error;
+    }
+
+    /* ESTUDEX_V1010_EXACT_STABLE_ORIGIN_GUARD */
+    console.warn('Porta 8787 já está em uso; recusando origem temporária para proteger perfil/Radmin.', error);
+    try {
+      require('electron').dialog.showErrorBox(
+        'ESTUDEX já está em execução',
+        'Já existe uma instância usando a rede do ESTUDEX. Feche o ESTUDEX pela bandeja do sistema e abra esta versão novamente.'
+      );
+    } catch {}
+    try { closeSplash(); } catch {}
+    app.quit();
+    return;
+  }
+
+  mainWindow = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    minWidth: 1050,
+    minHeight: 700,
+    /* ESTUDEX_V1010_EXACT_WINDOW_SHELL_MAIN */
+    frame: false,
+    backgroundColor: '#0d0f14',
+    autoHideMenuBar: true,
+    title: 'ESTUDEX',
+    icon: BLAZERX_ICON_PATH,
+    show: false,
+    webPreferences: {
+      /* ESTUDEX_V190_CLEANROOM_NATIVE_LIFECYCLE_HARDENING */
+      backgroundThrottling: false,
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false
+    }
+  });
+
+  mainWindow.setMenuBarVisibility(false);
+
+  await mainWindow.loadURL(
+    `http://127.0.0.1:${shareServer.port}/`
+  );
+
+  closeSplash();
+
+  mainWindow.show();
+  mainWindow.focus();
+  markLauncherReady();
+
+  mainWindow.on(
+    'closed',
+    () => {
+      mainWindow = null;
+    }
+  );
+}
+
+function runHiddenProcess(fileName, args = [], timeoutMs = 0) {
+  return new Promise(resolve => {
+    let child;
+    let settled = false;
+    let timer = null;
+
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(result);
+    };
+
+    try {
+      child = spawn(
+        fileName,
+        args,
+        {
+          windowsHide: true,
+          stdio: 'ignore'
+        }
+      );
+    } catch (error) {
+      finish({
+        ok: false,
+        code: -1,
+        error: error?.message || 'Falha ao iniciar processo.'
+      });
+      return;
+    }
+
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        try { child.kill(); } catch {}
+        finish({ ok: false, code: -1, timedOut: true });
+      }, timeoutMs);
+    }
+
+    child.once('error', error => {
+      finish({
+        ok: false,
+        code: -1,
+        error: error?.message || 'Falha ao iniciar processo.'
+      });
+    });
+
+    child.once('close', code => {
+      finish({
+        ok: code === 0,
+        code: Number.isInteger(code) ? code : -1
+      });
+    });
+  });
+}
+
+function powershellQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function isRadminIPv4(address) {
+  return /^26\.\d+\.\d+\.\d+$/.test(
+    String(address || '').trim()
+  );
+}
+
+function getRadminNetworkInfo() {
+  const candidates = [];
+
+  for (const [name, entries] of Object.entries(os.networkInterfaces())) {
+    for (const entry of entries || []) {
+      if (entry.family !== 'IPv4' || entry.internal) continue;
+
+      const adapterLooksRadmin = /radmin/i.test(name);
+      const addressLooksRadmin = isRadminIPv4(entry.address);
+
+      if (!adapterLooksRadmin && !addressLooksRadmin) continue;
+
+      candidates.push({
+        adapterName: name,
+        address: entry.address,
+        adapterLooksRadmin,
+        addressLooksRadmin
+      });
+    }
+  }
+
+  candidates.sort((a, b) => {
+    const aScore =
+      (a.adapterLooksRadmin ? 2 : 0) +
+      (a.addressLooksRadmin ? 1 : 0);
+    const bScore =
+      (b.adapterLooksRadmin ? 2 : 0) +
+      (b.addressLooksRadmin ? 1 : 0);
+
+    return bScore - aScore;
+  });
+
+  const selected = candidates[0] || null;
+
+  return {
+    available: Boolean(selected),
+    address: selected?.address || null,
+    adapterName: selected?.adapterName || null,
+    port: 8787,
+    base: selected
+      ? `http://${selected.address}:8787`
+      : null,
+    candidates: candidates.map(item => ({
+      adapterName: item.adapterName,
+      address: item.address
+    }))
+  };
+}
+
+async function checkRadminFirewall() {
+  return readRadminFirewallMarker();
+}
+
+function radminFirewallMarkerPath() {
+  return path.join(app.getPath('userData'), 'radmin-firewall-v3.json');
+}
+
+function readRadminFirewallMarker() {
+  try {
+    const marker = JSON.parse(fs.readFileSync(radminFirewallMarkerPath(), 'utf8'));
+    const currentExe = path.resolve(process.execPath);
+    const markedExe = path.resolve(String(marker?.runtimeExe || ''));
+    return Boolean(
+      marker?.configured === true &&
+      marker?.port === 8787 &&
+      markedExe &&
+      markedExe.toLowerCase() === currentExe.toLowerCase()
+    );
+  } catch {
+    return false;
+  }
+}
+
+function writeRadminFirewallMarker() {
+  try {
+    const markerPath = radminFirewallMarkerPath();
+    fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+    fs.writeFileSync(markerPath, JSON.stringify({
+      configured: true,
+      port: 8787,
+      runtimeExe: path.resolve(process.execPath),
+      version: app.getVersion(),
+      configuredAt: new Date().toISOString()
+    }, null, 2), 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getRadminNetworkHelperPath() {
+  const externalPath = path.join(process.resourcesPath, 'BLAZERX-NetworkHelper.exe');
+  const devPath = path.join(__dirname, 'resources', 'BLAZERX-NetworkHelper.exe');
+  return fs.existsSync(externalPath) ? externalPath : devPath;
+}
+
+async function runElevatedRadminFirewall() {
+  const helperPath = getRadminNetworkHelperPath();
+  if (!fs.existsSync(helperPath)) {
+    return { ok:false, code:-1, error:'network_helper_missing' };
+  }
+  const resultPath = path.join(os.tmpdir(), 'BLAZERX-network-helper-result.txt');
+  try { fs.unlinkSync(resultPath); } catch {}
+  const openError = await shell.openPath(helperPath);
+  if (openError) return { ok:false, code:-1, error:openError };
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 60000) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    try {
+      const code = Number(fs.readFileSync(resultPath, 'utf8').trim());
+      try { fs.unlinkSync(resultPath); } catch {}
+      return { ok:code === 0, code:Number.isFinite(code) ? code : -1 };
+    } catch {}
+  }
+  return { ok:false, code:1223, timedOut:true };
+}
+
+let radminElevationArmedUntil = 0;
+
+ipcMain.on('network:arm-radmin-elevation', event => {
+  radminElevationArmedUntil = Date.now() + 60000;
+  try { event.returnValue = true; } catch {}
+});
+
+async function configureRadminFirewall() {
+  try {
+    const prepared = readRadminFirewallMarker();
+    if (prepared && prepared.ok) return prepared;
+  } catch {}
+  if (Date.now() > radminElevationArmedUntil) {
+    return { ok:true, prepared:false, needsAuthorization:true, skippedElevation:true };
+  }
+  radminElevationArmedUntil = 0;
+  if (process.platform !== 'win32') {
+    return { ok: true, configured: true, changed: false };
+  }
+
+  if (readRadminFirewallMarker()) {
+    return { ok: true, configured: true, changed: false, source: 'marker' };
+  }
+
+  if (await checkRadminFirewall()) {
+    writeRadminFirewallMarker();
+    return { ok: true, configured: true, changed: false, source: 'windows-check' };
+  }
+
+  const elevated = await runElevatedRadminFirewall();
+  if (!elevated.ok) {
+    return {
+      ok: false,
+      configured: false,
+      error:
+        elevated.code === 1223
+          ? 'A autorização do Windows foi cancelada.'
+          : elevated.timedOut
+            ? 'A autorização do Windows demorou demais. Tente novamente.'
+            : 'O Windows não conseguiu preparar a rede Radmin.'
+    };
+  }
+
+  writeRadminFirewallMarker();
+  return { ok: true, configured: true, changed: true, source: 'integrated-uac-helper' };
+}
+
+app.whenReady().then(async () => {
+  if (!launcherOwnsSplash()) {
+    createSplashWindow();
+  }
+
+  ipcMain.handle(
+    'capture:get-sources',
+    () => getSources()
+  );
+
+
+  ipcMain.handle(
+    'network:get-radmin-info',
+    () => getRadminNetworkInfo()
+  );
+
+  ipcMain.handle(
+    'network:ensure-online-server',
+    async () => ({
+      ok: await ensureOnlineServer(),
+      port: 8787
+    })
+  );
+
+  ipcMain.handle(
+    'network:configure-radmin-firewall',
+    () => configureRadminFirewall()
+  );
+
+  ipcMain.handle('profile:load',()=>{ try { const file=path.join(app.getPath('userData'),'profile.json'); if(!fs.existsSync(file)) return null; return JSON.parse(fs.readFileSync(file,'utf8')); } catch { return null; } });
+  ipcMain.handle('profile:save',(_event,profile)=>{ try { const safe={name:String(profile?.name||'Meu perfil').replace(/\s+/g,' ').trim().slice(0,24)||'Meu perfil',avatar:typeof profile?.avatar==='string'?profile.avatar:null,banner:typeof profile?.banner==='string'?profile.banner:null,bio:String(profile?.bio||'').replace(/\r/g,'').trim().slice(0,240),status:String(profile?.status||'Disponível').replace(/\s+/g,' ').trim().slice(0,48)||'Disponível'}; fs.writeFileSync(path.join(app.getPath('userData'),'profile.json'),JSON.stringify(safe),'utf8'); return true; } catch(error){ console.warn('Falha ao persistir perfil:',error); return false; } });
+
+  ipcMain.handle(
+    'window:toggle-fullscreen',
+    () => {
+      if (!mainWindow) return false;
+
+      mainWindow.setFullScreen(
+        !mainWindow.isFullScreen()
+      );
+
+      return mainWindow.isFullScreen();
+    }
+  );
+
+  try {
+    await createWindow();
+  } catch (error) {
+    console.error(
+      'Falha ao iniciar BlazerX:',
+      error
+    );
+
+    closeSplash();
+
+    const errorWindow =
+      new BrowserWindow({
+        width: 540,
+        height: 280,
+        resizable: false,
+        autoHideMenuBar: true,
+        backgroundColor: '#0b0e13',
+        title: 'ESTUDEX',
+        icon: BLAZERX_ICON_PATH
+      });
+
+    const message =
+      String(
+        error?.message ||
+        'Erro desconhecido'
+      )
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    await errorWindow.loadURL(
+      'data:text/html;charset=UTF-8,' +
+      encodeURIComponent(`
+        <body style="margin:0;background:#0b0e13;color:#fff;font-family:Segoe UI,Arial;display:grid;place-items:center;height:100vh">
+          <div style="max-width:430px;text-align:center;padding:25px">
+            <h2 style="margin:0 0 10px">Não foi possível abrir o BLAZERX</h2>
+            <p style="color:#929baa;line-height:1.5">${message}</p>
+          </div>
+        </body>
+      `)
+    );
+  }
+});
+
+app.on(
+  'window-all-closed',
+  async () => {
+    if (shareServer) {
+      await shareServer
+        .close()
+        .catch(() => {});
+    }
+
+
+    app.quit();
+  }
+);
+
+
+/* ESTUDEX v1.8.7 — internal GitHub Release updater */
+/* ESTUDEX_V187_UPDATER_DIGEST_REQUIRED */
+const BLAZERX_UPDATE_API = 'https://api.github.com/repos/Kodezinho22/BLAZERX-Downloads/releases/latest';
+let blazerxUpdateCheckRunning = false;
+let blazerxPromptedUpdateVersion = '';
+let blazerxReadyUpdate = null;
+
+function blazerxVersionParts(value) {
+  return String(value || '')
+    .replace(/^v/i, '')
+    .split('.')
+    .map(part => Number(String(part).replace(/[^0-9].*$/, '')) || 0);
+}
+
+function blazerxCompareVersions(a, b) {
+  const left = blazerxVersionParts(a);
+  const right = blazerxVersionParts(b);
+  const size = Math.max(left.length, right.length);
+  for (let i = 0; i < size; i += 1) {
+    const l = left[i] || 0;
+    const r = right[i] || 0;
+    if (l > r) return 1;
+    if (l < r) return -1;
+  }
+  return 0;
+}
+
+function blazerxHttpsJson(url, redirects = 5) {
+  return new Promise((resolve, reject) => {
+    const https = require('https');
+    const request = https.get(url, {
+      headers: {
+        'User-Agent': 'BLAZERX-Updater/' + app.getVersion(),
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28'
+      }
+    }, response => {
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location && redirects > 0) {
+        response.resume();
+        const next = new URL(response.headers.location, url).toString();
+        resolve(blazerxHttpsJson(next, redirects - 1));
+        return;
+      }
+      if (response.statusCode !== 200) {
+        response.resume();
+        reject(new Error('update_http_' + response.statusCode));
+        return;
+      }
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { body += chunk; });
+      response.on('end', () => {
+        try { resolve(JSON.parse(body)); }
+        catch (error) { reject(error); }
+      });
+    });
+    request.setTimeout(15000, () => request.destroy(new Error('update_timeout')));
+    request.on('error', reject);
+  });
+}
+
+function blazerxDownloadUpdate(url, destination, expectedSize, expectedDigest, redirects = 7) {
+  return new Promise((resolve, reject) => {
+    const https = require('https');
+    const crypto = require('crypto');
+    const request = https.get(url, {
+      headers: { 'User-Agent': 'BLAZERX-Updater/' + app.getVersion() }
+    }, response => {
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location && redirects > 0) {
+        response.resume();
+        const next = new URL(response.headers.location, url).toString();
+        resolve(blazerxDownloadUpdate(next, destination, expectedSize, expectedDigest, redirects - 1));
+        return;
+      }
+      if (response.statusCode !== 200) {
+        response.resume();
+        reject(new Error('download_http_' + response.statusCode));
+        return;
+      }
+
+      const temp = destination + '.part';
+      try { fs.unlinkSync(temp); } catch {}
+      const file = fs.createWriteStream(temp);
+      const hash = crypto.createHash('sha256');
+      let bytes = 0;
+
+      response.on('data', chunk => {
+        bytes += chunk.length;
+        hash.update(chunk);
+      });
+      response.pipe(file);
+
+      const fail = error => {
+        try { file.destroy(); } catch {}
+        try { fs.unlinkSync(temp); } catch {}
+        reject(error);
+      };
+
+      response.on('error', fail);
+      file.on('error', fail);
+      file.on('finish', () => {
+        file.close(() => {
+          try {
+            if (Number(expectedSize) > 0 && bytes !== Number(expectedSize)) {
+              throw new Error('update_size_mismatch');
+            }
+            const digest = hash.digest('hex').toLowerCase();
+            const expected = String(expectedDigest || '').replace(/^sha256:/i, '').toLowerCase();
+            if (!/^[a-f0-9]{64}$/.test(expected)) throw new Error('update_digest_missing');
+            if (digest !== expected) throw new Error('update_digest_mismatch');
+            try { fs.unlinkSync(destination); } catch {}
+            fs.renameSync(temp, destination);
+            resolve({ path: destination, bytes, digest });
+          } catch (error) {
+            try { fs.unlinkSync(temp); } catch {}
+            reject(error);
+          }
+        });
+      });
+    });
+    request.setTimeout(30000, () => request.destroy(new Error('download_timeout')));
+    request.on('error', reject);
+  });
+}
+
+function blazerxVisibleWindow() {
+  return BrowserWindow.getAllWindows().find(window => !window.isDestroyed() && window.isVisible()) || null;
+}
+
+function blazerxBroadcastUpdateReady(targetWebContents = null) {
+  if (!blazerxReadyUpdate) return;
+  const payload = { version: blazerxReadyUpdate.version };
+  if (targetWebContents && !targetWebContents.isDestroyed()) {
+    try { targetWebContents.send('blazerx:update-ready', payload); } catch {}
+    return;
+  }
+  for (const window of BrowserWindow.getAllWindows()) {
+    try { if (!window.isDestroyed()) window.webContents.send('blazerx:update-ready', payload); } catch {}
+  }
+}
+
+async function blazerxPromptReadyUpdate(version, installerPath) {
+  blazerxPromptedUpdateVersion = version;
+  blazerxReadyUpdate = { version, installerPath };
+  blazerxBroadcastUpdateReady();
+}
+
+async function blazerxInstallReadyUpdate(options = {}) {
+  if (!blazerxReadyUpdate || !blazerxReadyUpdate.installerPath) return;
+  const installerPath = blazerxReadyUpdate.installerPath;
+  try {
+    if (!fs.existsSync(installerPath)) {
+      blazerxReadyUpdate = null;
+      blazerxPromptedUpdateVersion = '';
+      if (options?.throwOnError) throw new Error('update_installer_missing');
+      return;
+    }
+    /* BLAZERX_UPDATE_RELAUNCH_V5: native relay only; no CMD/PowerShell. */
+    const childProcess = require('child_process');
+    const os = require('os');
+    const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+    const blazerxRoot = path.join(localAppData, 'blazerx');
+    const externalRelay = path.join(process.resourcesPath, 'BLAZERX-UpdateRelay.exe');
+    const devRelay = path.join(__dirname, 'resources', 'BLAZERX-UpdateRelay.exe');
+    const relaySource = fs.existsSync(externalRelay) ? externalRelay : devRelay;
+    const relayPath = path.join(os.tmpdir(), 'BLAZERX-UpdateRelay.exe');
+    if (!fs.existsSync(relaySource)) throw new Error('update_relay_missing');
+    try { fs.copyFileSync(relaySource, relayPath); } catch (copyError) {
+      if (!fs.existsSync(relayPath)) throw copyError;
+    }
+    const relay = childProcess.spawn(relayPath, [installerPath, blazerxRoot], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true
+    });
+    relay.unref();
+    setTimeout(() => app.quit(), 120);
+  } catch (error) {
+    console.warn('[BLAZERX updater install]', error && error.message ? error.message : error);
+    if (options?.throwOnError) throw error;
+  }
+}
+
+ipcMain.on('blazerx:update-query', event => {
+  try { blazerxBroadcastUpdateReady(event.sender); } catch {}
+});
+ipcMain.on('blazerx:update-install', () => {
+  try { blazerxInstallReadyUpdate(); } catch {}
+});
+
+async function blazerxCheckForUpdates(options = {}) {
+  /* ESTUDEX_V190_CLEANROOM_UPDATER_ERROR_PROPAGATION */
+  if (!app.isPackaged || blazerxUpdateCheckRunning) return;
+  blazerxUpdateCheckRunning = true;
+  try {
+    const release = await blazerxHttpsJson(BLAZERX_UPDATE_API);
+    if (!release || release.draft || release.prerelease) return;
+    const latestVersion = String(release.tag_name || release.name || '').replace(/^v/i, '').trim();
+    if (!latestVersion || blazerxCompareVersions(latestVersion, app.getVersion()) <= 0) return;
+
+    const asset = Array.isArray(release.assets)
+      ? release.assets.find(item => item && (item.name === 'ESTUDEX-Setup.exe' || item.name === 'BLAZERX-Setup.exe') && item.browser_download_url)
+      : null;
+    if (!asset) return;
+
+    if (blazerxReadyUpdate && blazerxReadyUpdate.version === latestVersion && fs.existsSync(blazerxReadyUpdate.installerPath)) {
+      blazerxBroadcastUpdateReady();
+      return;
+    }
+
+    const safeVersion = latestVersion.replace(/[^0-9A-Za-z._-]/g, '_');
+    const installerPath = path.join(require('os').tmpdir(), 'BLAZERX-Update-' + safeVersion + '.exe');
+    const assetDigest = String(asset.digest || '').trim();
+    if (!/^sha256:[a-f0-9]{64}$/i.test(assetDigest)) throw new Error('update_digest_missing');
+    await blazerxDownloadUpdate(asset.browser_download_url, installerPath, asset.size, assetDigest);
+    await blazerxPromptReadyUpdate(latestVersion, installerPath);
+  } catch (error) {
+    console.warn('[BLAZERX updater]', error && error.message ? error.message : error);
+    if (options?.throwOnError) throw error;
+  } finally {
+    blazerxUpdateCheckRunning = false;
+  }
+}
+
+app.whenReady().then(() => {
+  setTimeout(() => blazerxCheckForUpdates(), 8000);
+  const timer = setInterval(() => blazerxCheckForUpdates(), 2 * 60 * 1000);
+  if (timer && typeof timer.unref === 'function') timer.unref();
+});
+
+
+/* BLAZERX_UPDATE_FOCUS_CHECK_V3: recheck shortly after the user returns to the app. */
+let blazerxLastFocusUpdateCheck = 0;
+app.on('browser-window-focus', () => {
+  const now = Date.now();
+  if (now - blazerxLastFocusUpdateCheck < 60000) return;
+  blazerxLastFocusUpdateCheck = now;
+  setTimeout(() => { try { blazerxCheckForUpdates(); } catch {} }, 750);
+});
+
+
+/* ESTUDEX_WINDOWS_BRANDING_V1 */
+function ensureEstudexWindowsBranding() {
+  if (process.platform !== 'win32') return;
+
+  try {
+    const desktop = app.getPath('desktop');
+    const estudexShortcut = path.join(desktop, 'ESTUDEX.lnk');
+    const legacyShortcut = path.join(desktop, 'BLAZERX.lnk');
+
+    try {
+      shell.writeShortcutLink(estudexShortcut, 'replace', {
+        target: process.execPath,
+        cwd: path.dirname(process.execPath),
+        icon: process.execPath,
+        iconIndex: 0,
+        description: 'ESTUDEX'
+      });
+    } catch {}
+
+    try {
+      if (fs.existsSync(legacyShortcut) && legacyShortcut !== estudexShortcut) {
+        fs.unlinkSync(legacyShortcut);
+      }
+    } catch {}
+  } catch {}
+
+  try {
+    const uninstallRoot =
+      'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall';
+    const candidateKeys = [
+      uninstallRoot + '\\blazerx'
+    ];
+
+    for (const needle of ['BLAZERX', 'ESTUDEX']) {
+      try {
+        const search = spawnSync(
+          'reg.exe',
+          ['query', uninstallRoot, '/s', '/f', needle, '/d'],
+          { windowsHide: true, encoding: 'utf8' }
+        );
+        if (search.status === 0 && search.stdout) {
+          for (const line of search.stdout.split(/\r?\n/)) {
+            const key = line.trim();
+            if (
+              key.startsWith('HKEY_CURRENT_USER\\') &&
+              key.toLowerCase().includes('\\uninstall\\') &&
+              !candidateKeys.includes(key)
+            ) {
+              candidateKeys.push(key);
+            }
+          }
+        }
+      } catch {}
+    }
+
+    const installRoot = path.resolve(path.dirname(process.execPath), '..');
+    const rootLauncher = path.join(installRoot, 'ESTUDEX.exe');
+    const displayIcon = (fs.existsSync(rootLauncher) ? rootLauncher : process.execPath) + ',0';
+
+    for (const key of candidateKeys) {
+      try {
+        const query = spawnSync(
+          'reg.exe',
+          ['query', key],
+          { windowsHide: true, encoding: 'utf8' }
+        );
+        if (query.status !== 0) continue;
+
+        const body = query.stdout || '';
+        if (!/BLAZERX|ESTUDEX/i.test(body) && !/\\blazerx$/i.test(key)) continue;
+
+        spawnSync(
+          'reg.exe',
+          ['add', key, '/v', 'DisplayName', '/t', 'REG_SZ', '/d', 'ESTUDEX', '/f'],
+          { windowsHide: true, stdio: 'ignore' }
+        );
+        spawnSync(
+          'reg.exe',
+          ['add', key, '/v', 'DisplayIcon', '/t', 'REG_SZ', '/d', displayIcon, '/f'],
+          { windowsHide: true, stdio: 'ignore' }
+        );
+      } catch {}
+    }
+  } catch {}
+}
+
+app.whenReady().then(() => {
+  setTimeout(() => {
+    try { ensureEstudexWindowsBranding(); } catch {}
+  }, 1200);
+});
+
+
+/* ESTUDEX_WINDOWS_REPAIR_V101 */
+function repairEstudexWindowsIntegrationV101() {
+  if (process.platform !== 'win32') return;
+
+  const version = app.getVersion();
+  const installRoot = path.resolve(path.dirname(process.execPath), '..');
+  const updateExe = path.join(installRoot, 'Update.exe');
+
+  // Stable desktop shortcut: point at Update.exe instead of app-1.x.x so a
+  // future update can replace the version folder without breaking the link.
+  try {
+    const desktop = app.getPath('desktop');
+    const estudexShortcut = path.join(desktop, 'ESTUDEX.lnk');
+    const legacyShortcut = path.join(desktop, 'BLAZERX.lnk');
+
+    const target = fs.existsSync(updateExe) ? updateExe : process.execPath;
+    const args = fs.existsSync(updateExe) ? '--processStart ESTUDEX.exe' : '';
+
+    shell.writeShortcutLink(estudexShortcut, 'replace', {
+      target,
+      cwd: installRoot,
+      args,
+      icon: process.execPath,
+      iconIndex: 0,
+      description: 'ESTUDEX',
+      appUserModelId: 'com.estudex.desktop'
+    });
+
+    if (fs.existsSync(legacyShortcut)) {
+      try { fs.unlinkSync(legacyShortcut); } catch {}
+    }
+  } catch (error) {
+    console.warn('ESTUDEX: não foi possível reparar o atalho:', error?.message || error);
+  }
+
+  // Repair the existing Squirrel uninstall entry instead of creating a
+  // second installation. The technical key/folder can remain "blazerx".
+  try {
+    const uninstallRoot =
+      'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall';
+    const candidateKeys = [uninstallRoot + '\\blazerx'];
+
+    for (const needle of ['ESTUDEX', 'BLAZERX']) {
+      const found = spawnSync(
+        'reg.exe',
+        ['query', uninstallRoot, '/s', '/f', needle, '/d'],
+        { windowsHide: true, encoding: 'utf8' }
+      );
+
+      if (found.status === 0 && found.stdout) {
+        for (const line of found.stdout.split(/\r?\n/)) {
+          const key = line.trim();
+          if (
+            key.startsWith('HKEY_CURRENT_USER\\') &&
+            key.toLowerCase().includes('\\uninstall\\') &&
+            !candidateKeys.includes(key)
+          ) {
+            candidateKeys.push(key);
+          }
+        }
+      }
+    }
+
+    let key = candidateKeys.find(candidate => {
+      const query = spawnSync(
+        'reg.exe',
+        ['query', candidate],
+        { windowsHide: true, encoding: 'utf8' }
+      );
+      return query.status === 0 && /ESTUDEX|BLAZERX|blazerx/i.test(query.stdout || candidate);
+    });
+
+    // On an interrupted migration the entry can disappear. Recreate only the
+    // same legacy key so Programs and Features gets one clean ESTUDEX entry.
+    if (!key) key = uninstallRoot + '\\blazerx';
+
+    const values = [
+      ['DisplayName', 'ESTUDEX'],
+      ['Publisher', 'ESTUDEX'],
+      ['DisplayVersion', version],
+      ['DisplayIcon', process.execPath + ',0'],
+      ['InstallLocation', installRoot]
+    ];
+
+    if (fs.existsSync(updateExe)) {
+      values.push(['UninstallString', '"' + updateExe + '" --uninstall']);
+      values.push(['QuietUninstallString', '"' + updateExe + '" --uninstall -s']);
+    }
+
+    for (const [name, value] of values) {
+      spawnSync(
+        'reg.exe',
+        ['add', key, '/v', name, '/t', 'REG_SZ', '/d', value, '/f'],
+        { windowsHide: true, stdio: 'ignore' }
+      );
+    }
+  } catch (error) {
+    console.warn('ESTUDEX: não foi possível reparar Programas e Recursos:', error?.message || error);
+  }
+}
+
+// Force the visible window/taskbar title even if an old HTML <title> or page
+// title event still contains the previous mixed-case BlazerX name.
+app.on('browser-window-created', (_event, win) => {
+  const applyTitle = () => {
+    try { win.setTitle('ESTUDEX v' + app.getVersion()); } catch {}
+  };
+  win.on('page-title-updated', event => {
+    event.preventDefault();
+    applyTitle();
+  });
+  setTimeout(applyTitle, 0);
+});
+
+app.whenReady().then(() => {
+  setTimeout(() => {
+    try { repairEstudexWindowsIntegrationV101(); } catch {}
+  }, 700);
+});
+
+
+/* ESTUDEX_WINDOWS_REPAIR_V102 */
+function repairEstudexWindowsIntegrationV102() {
+  if (process.platform !== 'win32') return;
+
+  const installRoot = path.resolve(path.dirname(process.execPath), '..');
+  const updateExe = path.join(installRoot, 'Update.exe');
+  const externalIcon = path.join(installRoot, 'ESTUDEX.ico');
+  const bundledIcon = path.join(__dirname, 'resources', 'estudex.ico');
+
+  try {
+    if (fs.existsSync(bundledIcon)) fs.copyFileSync(bundledIcon, externalIcon);
+  } catch (error) {
+    console.warn('ESTUDEX: falha ao exportar icone:', error?.message || error);
+  }
+
+  const staleShortcutDirs = [
+    app.getPath('desktop'),
+    path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
+    path.join(app.getPath('appData'), 'Microsoft', 'Internet Explorer', 'Quick Launch', 'User Pinned', 'TaskBar')
+  ];
+  for (const dir of staleShortcutDirs) {
+    try {
+      for (const file of fs.readdirSync(dir)) {
+        if (/^BLAZERX(?: Desktop)?.lnk$/i.test(file)) {
+          try { fs.unlinkSync(path.join(dir, file)); } catch {}
+        }
+      }
+    } catch {}
+  }
+
+  let squirrelShortcutOk = false;
+  if (fs.existsSync(updateExe)) {
+    for (const args of [
+      ['--createShortcut', 'ESTUDEX.exe'],
+      ['--createShortcut=ESTUDEX.exe']
+    ]) {
+      try {
+        const result = spawnSync(updateExe, args, { windowsHide: true, stdio: 'ignore' });
+        if (result.status === 0) { squirrelShortcutOk = true; break; }
+      } catch {}
+    }
+  }
+
+  try {
+    const shortcut = path.join(app.getPath('desktop'), 'ESTUDEX.lnk');
+    const iconPath = fs.existsSync(externalIcon) ? externalIcon : process.execPath;
+    const details = fs.existsSync(updateExe)
+      ? {
+          target: updateExe,
+          cwd: installRoot,
+          args: '--processStart ESTUDEX.exe',
+          icon: iconPath,
+          iconIndex: 0,
+          description: 'ESTUDEX',
+          appUserModelId: 'com.estudex.desktop'
+        }
+      : {
+          target: process.execPath,
+          cwd: path.dirname(process.execPath),
+          icon: iconPath,
+          iconIndex: 0,
+          description: 'ESTUDEX',
+          appUserModelId: 'com.estudex.desktop'
+        };
+    if (!squirrelShortcutOk || !fs.existsSync(shortcut)) {
+      shell.writeShortcutLink(shortcut, 'replace', details);
+    }
+  } catch (error) {
+    console.warn('ESTUDEX: falha ao criar atalho:', error?.message || error);
+  }
+
+  try {
+    const uninstallRoot = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall';
+    const key = uninstallRoot + '\\blazerx';
+    const version = app.getVersion();
+    const values = [
+      ['DisplayName', 'ESTUDEX'],
+      ['Publisher', 'ESTUDEX'],
+      ['DisplayVersion', version],
+      ['DisplayIcon', (fs.existsSync(externalIcon) ? externalIcon : process.execPath) + ',0'],
+      ['InstallLocation', installRoot]
+    ];
+    if (fs.existsSync(updateExe)) {
+      values.push(['UninstallString', '"' + updateExe + '" --uninstall']);
+      values.push(['QuietUninstallString', '"' + updateExe + '" --uninstall -s']);
+    }
+    for (const [name, value] of values) {
+      spawnSync('reg.exe', ['add', key, '/v', name, '/t', 'REG_SZ', '/d', value, '/f'], {
+        windowsHide: true,
+        stdio: 'ignore'
+      });
+    }
+  } catch (error) {
+    console.warn('ESTUDEX: falha ao reparar Programas e Recursos:', error?.message || error);
+  }
+}
+
+app.on('browser-window-created', (_event, win) => {
+  const applyEstudexIdentity = () => {
+    try { win.setTitle('ESTUDEX v' + app.getVersion()); } catch {}
+    try {
+      const iconPath = path.join(__dirname, 'resources', 'estudex.ico');
+      if (fs.existsSync(iconPath)) win.setIcon(nativeImage.createFromPath(iconPath));
+    } catch {}
+  };
+  win.on('page-title-updated', event => {
+    event.preventDefault();
+    applyEstudexIdentity();
+  });
+  setTimeout(applyEstudexIdentity, 0);
+});
+
+app.whenReady().then(() => {
+  setTimeout(() => {
+    try { repairEstudexWindowsIntegrationV102(); } catch {}
+  }, 900);
+});
+
+
+/* ESTUDEX_WINDOWS_REPAIR_V103 */
+function repairEstudexWindowsIntegrationV103() {
+  if (process.platform !== 'win32') return;
+
+  try { process.title = 'ESTUDEX'; } catch {}
+  try { app.setAppUserModelId('com.estudex.desktop'); } catch {}
+
+  const installRoot = path.resolve(path.dirname(process.execPath), '..');
+  const updateExe = path.join(installRoot, 'Update.exe');
+  const desktop = app.getPath('desktop');
+  const startMenu = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+
+  for (const dir of [desktop, startMenu]) {
+    try {
+      for (const file of fs.readdirSync(dir)) {
+        if (/^BLAZERX(?: Desktop)?\.lnk$/i.test(file)) {
+          try { fs.unlinkSync(path.join(dir, file)); } catch {}
+        }
+      }
+    } catch {}
+  }
+
+  const shortcut = path.join(desktop, 'ESTUDEX.lnk');
+  const shortcutDetails = fs.existsSync(updateExe)
+    ? {
+        target: updateExe,
+        cwd: installRoot,
+        args: '--processStart ESTUDEX.exe',
+        icon: process.execPath,
+        iconIndex: 0,
+        description: 'ESTUDEX',
+        appUserModelId: 'com.estudex.desktop'
+      }
+    : {
+        target: process.execPath,
+        cwd: path.dirname(process.execPath),
+        icon: process.execPath,
+        iconIndex: 0,
+        description: 'ESTUDEX',
+        appUserModelId: 'com.estudex.desktop'
+      };
+
+  let shortcutCreated = false;
+  for (const operation of ['replace', 'create']) {
+    try {
+      const ok = shell.writeShortcutLink(shortcut, operation, shortcutDetails);
+      if (ok || fs.existsSync(shortcut)) {
+        shortcutCreated = true;
+        break;
+      }
+    } catch {}
+  }
+
+  // Fallback uses Windows' own shortcut COM API, fully hidden, without admin.
+  if (!shortcutCreated && !fs.existsSync(shortcut)) {
+    try {
+      const ps = [
+        '$ws = New-Object -ComObject WScript.Shell',
+        '$s = $ws.CreateShortcut(' + JSON.stringify(shortcut) + ')',
+        '$s.TargetPath = ' + JSON.stringify(fs.existsSync(updateExe) ? updateExe : process.execPath),
+        fs.existsSync(updateExe) ? '$s.Arguments = "--processStart ESTUDEX.exe"' : '',
+        '$s.WorkingDirectory = ' + JSON.stringify(installRoot),
+        '$s.IconLocation = ' + JSON.stringify(process.execPath + ',0'),
+        '$s.Description = "ESTUDEX"',
+        '$s.Save()'
+      ].filter(Boolean).join('; ');
+      spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', ps], {
+        windowsHide: true,
+        stdio: 'ignore'
+      });
+    } catch {}
+  }
+
+  // Repair Programs and Features using the EXE itself as the icon source.
+  try {
+    const key = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\blazerx';
+    const values = [
+      ['DisplayName', 'ESTUDEX'],
+      ['Publisher', 'ESTUDEX'],
+      ['DisplayVersion', app.getVersion()],
+      ['DisplayIcon', process.execPath + ',0'],
+      ['InstallLocation', installRoot]
+    ];
+    if (fs.existsSync(updateExe)) {
+      values.push(['UninstallString', '"' + updateExe + '" --uninstall']);
+      values.push(['QuietUninstallString', '"' + updateExe + '" --uninstall -s']);
+    }
+    for (const [name, value] of values) {
+      spawnSync('reg.exe', ['add', key, '/v', name, '/t', 'REG_SZ', '/d', value, '/f'], {
+        windowsHide: true,
+        stdio: 'ignore'
+      });
+    }
+  } catch {}
+}
+
+app.on('browser-window-created', (_event, win) => {
+  const applyV103 = () => {
+    try { win.setTitle('ESTUDEX v' + app.getVersion()); } catch {}
+    try {
+      const pngPath = path.join(__dirname, 'resources', 'estudex.png');
+      if (fs.existsSync(pngPath)) {
+        const image = nativeImage.createFromPath(pngPath);
+        if (!image.isEmpty()) win.setIcon(image);
+      }
+    } catch {}
+  };
+  win.on('page-title-updated', event => {
+    event.preventDefault();
+    applyV103();
+  });
+  setTimeout(applyV103, 0);
+  setTimeout(applyV103, 800);
+});
+
+app.whenReady().then(() => {
+  setTimeout(() => { try { repairEstudexWindowsIntegrationV103(); } catch {} }, 1000);
+  setTimeout(() => { try { repairEstudexWindowsIntegrationV103(); } catch {} }, 4000);
+});
+
+
+/* ESTUDEX_TRAY_BACKGROUND_V120 */
+const { Tray: EstudexTrayV120, Menu: EstudexMenuV120 } = require('electron');
+let estudexTrayV120 = null;
+let estudexQuittingV120 = false;
+
+function estudexGetMainWindowV120() {
+  try {
+    return BrowserWindow.getAllWindows().find(win => win && !win.isDestroyed()) || null;
+  } catch {
+    return null;
+  }
+}
+
+function estudexShowMainWindowV120() {
+  const win = estudexGetMainWindowV120();
+  if (!win) return;
+  try {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  } catch {}
+}
+
+function estudexEnsureTrayV120() {
+  if (process.platform !== 'win32' || estudexTrayV120) return estudexTrayV120;
+  try {
+    const icoPath = path.join(__dirname, 'resources', 'estudex.ico');
+    const pngPath = path.join(__dirname, 'resources', 'estudex.png');
+    const iconPath = fs.existsSync(icoPath) ? icoPath : pngPath;
+    estudexTrayV120 = new EstudexTrayV120(iconPath);
+    estudexTrayV120.setToolTip('ESTUDEX — rodando em segundo plano');
+    estudexTrayV120.setContextMenu(EstudexMenuV120.buildFromTemplate([
+      { label:'Abrir ESTUDEX', click:estudexShowMainWindowV120 },
+      { type:'separator' },
+      { label:'Sair do ESTUDEX', click:() => { estudexQuittingV120 = true; app.quit(); } }
+    ]));
+    estudexTrayV120.on('click', estudexShowMainWindowV120);
+    estudexTrayV120.on('double-click', estudexShowMainWindowV120);
+  } catch (error) {
+    console.warn('ESTUDEX tray:', error?.message || error);
+  }
+  return estudexTrayV120;
+}
+
+app.on('before-quit', () => { estudexQuittingV120 = true; });
+app.on('browser-window-created', (_event, win) => {
+  try { win.webContents.setBackgroundThrottling(false); } catch {}
+  win.on('minimize', event => {
+    if (estudexQuittingV120) return;
+    try {
+      event.preventDefault();
+      estudexEnsureTrayV120();
+      win.hide();
+    } catch {}
+  });
+});
+
+app.whenReady().then(() => {
+  setTimeout(estudexEnsureTrayV120, 600);
+});
+
+
+/* ESTUDEX_V160_WINDOW_AND_SPLASH */
+
+/* Discord-like window behavior: minimize is normal; X hides to tray. */
+app.on('browser-window-created', (_event, win) => {
+  setTimeout(() => {
+    try {
+      if (!win || win.isDestroyed() || win !== mainWindow) return;
+      /* Remove the legacy v1.2.0 listener that redirected minimize to tray. */
+      win.removeAllListeners('minimize');
+      if (win.__estudexCloseToTrayV160) return;
+      win.__estudexCloseToTrayV160 = true;
+      win.on('close', event => {
+        if (estudexQuittingV120) return;
+        event.preventDefault();
+        try {
+          estudexEnsureTrayV120();
+          win.hide();
+        } catch {}
+      });
+    } catch {}
+  }, 0);
+});
+
+/* Replace the old BLAZERX-era splash with the current ESTUDEX identity. */
+createSplashWindow = function estudexCreateSplashWindowV160() {
+  const iconPath = fs.existsSync(path.join(__dirname, 'resources', 'estudex.png'))
+    ? path.join(__dirname, 'resources', 'estudex.png')
+    : BLAZERX_ICON_PATH;
+  let iconData = '';
+  try {
+    const bytes = fs.readFileSync(iconPath);
+    iconData = 'data:image/png;base64,' + bytes.toString('base64');
+  } catch {
+    iconData = BLAZERX_ICON_DATA;
+  }
+
+  splashWindow = new BrowserWindow({
+    width: 500,
+    height: 330,
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    movable: true,
+    transparent: false,
+    backgroundColor: '#080d15',
+    alwaysOnTop: true,
+    center: true,
+    show: false,
+    title: 'ESTUDEX',
+    icon: iconPath,
+    webPreferences: {
+      /* ESTUDEX_V190_CLEANROOM_NATIVE_LIFECYCLE_HARDENING */
+      backgroundThrottling: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false
+    }
+  });
+
+  const splashHtml = `<!doctype html>
+  <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    *{box-sizing:border-box}html,body{width:100%;height:100%;margin:0;overflow:hidden}
+    body{display:grid;place-items:center;background:radial-gradient(circle at 50% 18%,rgba(89,79,255,.20),transparent 36%),linear-gradient(160deg,#0b1220 0%,#070b12 72%);color:#f7f9fd;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-app-region:drag;-webkit-user-select:none;user-select:none}
+    .shell{width:100%;height:100%;position:relative;display:grid;place-items:center;border:1px solid rgba(255,255,255,.055);overflow:hidden}
+    .glow{position:absolute;width:220px;height:220px;border-radius:50%;background:rgba(75,91,255,.12);filter:blur(45px);animation:glow 2.2s ease-in-out infinite}
+    .content{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;text-align:center}
+    .logo-wrap{width:112px;height:112px;position:relative;display:grid;place-items:center;margin-bottom:16px}
+    .ring,.ring:after{position:absolute;inset:0;border-radius:34px;content:""}
+    .ring{border:1px solid rgba(255,255,255,.07);background:rgba(12,18,30,.72);box-shadow:0 22px 52px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.035)}
+    .ring:after{inset:-2px;border:2px solid transparent;border-top-color:#6f73ff;border-right-color:#24c8f2;filter:drop-shadow(0 0 8px rgba(78,103,255,.38));animation:spin 1.05s linear infinite}
+    img{position:relative;z-index:2;width:76px;height:76px;object-fit:contain;border-radius:22px;filter:drop-shadow(0 12px 22px rgba(0,0,0,.34));animation:breath 1.9s ease-in-out infinite}
+    .brand{font-size:20px;font-weight:900;letter-spacing:.20em;margin-left:.20em}.brand span{color:#31c9ef}
+    .status{margin-top:9px;color:#98a5b8;font-size:11px;font-weight:700}.status:after{content:"";animation:dots 1.25s steps(4,end) infinite}
+    .bar{width:210px;height:4px;margin-top:20px;border-radius:99px;background:rgba(255,255,255,.055);overflow:hidden}.bar i{display:block;width:42%;height:100%;border-radius:inherit;background:linear-gradient(90deg,#665cff,#27c9ef);box-shadow:0 0 12px rgba(65,115,255,.45);animation:load 1.45s ease-in-out infinite}
+    .hint{position:absolute;bottom:18px;color:#475367;font-size:9px;letter-spacing:.04em}
+    @keyframes spin{to{transform:rotate(360deg)}}@keyframes breath{50%{transform:scale(1.035)}}@keyframes glow{50%{transform:scale(1.12);opacity:.72}}
+    @keyframes load{0%{transform:translateX(-110%)}50%{transform:translateX(75%)}100%{transform:translateX(250%)}}
+    @keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%,100%{content:"..."}}
+  </style></head><body><div class="shell"><div class="glow"></div><div class="content"><div class="logo-wrap"><div class="ring"></div><img src="${iconData}" alt="ESTUDEX"></div><div class="brand">ESTUDE<span>X</span></div><div class="status">Preparando sua experiência</div><div class="bar"><i></i></div></div><div class="hint">Iniciando serviços • conectando recursos</div></div></body></html>`;
+
+  splashWindow.loadURL('data:text/html;charset=UTF-8,' + encodeURIComponent(splashHtml));
+  splashWindow.once('ready-to-show', () => splashWindow?.show());
+};
+
+
+/* ESTUDEX_V173_WINDOW_ATTENTION */
+
+/* Keep the native Windows title bar clean: the lobby already shows version. */
+app.on('browser-window-created', (_event, win) => {
+  setTimeout(() => {
+    try {
+      if (!win || win.isDestroyed() || win !== mainWindow) return;
+      win.setTitle('ESTUDEX');
+      if (!win.__estudexTitleLockV173) {
+        win.__estudexTitleLockV173 = true;
+        win.on('page-title-updated', event => {
+          event.preventDefault();
+          try { win.setTitle('ESTUDEX'); } catch {}
+        });
+      }
+    } catch {}
+  }, 0);
+});
+
+/* Native Windows taskbar attention used when a new ESTUDEX update is ready. */
+ipcMain.handle('estudex:taskbar-attention-v173', (_event, enabled) => {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    mainWindow.flashFrame(Boolean(enabled));
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+
+/* ESTUDEX_V179_NATIVE_TITLE_LOCK */
+const { BrowserWindow: EstudexBrowserWindowV179 } = require('electron');
+
+function estudexLockWindowTitleV179(win) {
+  if (!win || win.isDestroyed()) return;
+  const force = () => {
+    try { if (!win.isDestroyed() && win.getTitle() !== 'ESTUDEX') win.setTitle('ESTUDEX'); } catch {}
+  };
+  force();
+  if (win.__estudexNativeTitleLockV179) return;
+  win.__estudexNativeTitleLockV179 = true;
+  win.on('page-title-updated', event => {
+    try { event.preventDefault(); } catch {}
+    force();
+  });
+  try { win.webContents.on('did-finish-load', () => setTimeout(force, 0)); } catch {}
+  win.on('show', force);
+  win.on('focus', force);
+}
+
+app.on('browser-window-created', (_event, win) => {
+  estudexLockWindowTitleV179(win);
+});
+
+app.whenReady().then(() => {
+  try { EstudexBrowserWindowV179.getAllWindows().forEach(estudexLockWindowTitleV179); } catch {}
+  setTimeout(() => {
+    try { EstudexBrowserWindowV179.getAllWindows().forEach(estudexLockWindowTitleV179); } catch {}
+  }, 400);
+});
+
+
+/* ESTUDEX_V190_CLEANROOM_NATIVE_PROFILE_MAIN */
+(function installEstudexCleanroomProfileIpc(){
+  const cleanProfile = input => ({
+    name:String(input?.name || 'Meu perfil').replace(/\s+/g,' ').trim().slice(0,24) || 'Meu perfil',
+    avatar:typeof input?.avatar === 'string' && input.avatar.length <= 18000000 ? input.avatar : null,
+    banner:typeof input?.banner === 'string' && input.banner.length <= 18000000 ? input.banner : null,
+    bio:String(input?.bio || '').replace(/\r/g,'').trim().slice(0,240),
+    status:(/* ESTUDEX_V193_SEMANTIC_STATUS_ENGINE */()=>{const raw=String(input?.status || 'Disponível').replace(/\s+/g,' ').trim().slice(0,48) || 'Disponível';const key=raw.toLocaleLowerCase('pt-BR');if(key==='away'||key==='ausente')return'Ausente';if(key==='dnd'||key==='não perturbar'||key==='nao perturbar')return'Não perturbar';if(key==='invisible'||key==='invisível'||key==='invisivel')return'Invisível';return'Disponível';})(),
+    tag:String(input?.tag || '').replace(/^@+/,'').replace(/[^A-Za-z0-9._-]/g,'').slice(0,24)
+  });
+  const profilePath = () => path.join(app.getPath('userData'),'profile.json');
+  try { ipcMain.removeHandler?.('cleanroom:profile:get'); } catch {}
+  try { ipcMain.removeHandler?.('cleanroom:profile:save'); } catch {}
+  ipcMain.handle('cleanroom:profile:get', async () => {
+    try {
+      const file = profilePath();
+      if (!fs.existsSync(file)) return cleanProfile({});
+      return cleanProfile(JSON.parse(fs.readFileSync(file,'utf8') || '{}'));
+    } catch { return cleanProfile({}); }
+  });
+  /* ESTUDEX_V193_HOTFIX9_NATIVE_PROFILE_MERGE */
+  ipcMain.handle('cleanroom:profile:save', async (_event, input) => {
+    const file=profilePath();
+    let previous=cleanProfile({});
+    try{if(fs.existsSync(file))previous=cleanProfile(JSON.parse(fs.readFileSync(file,'utf8')||'{}'));}catch{}
+    const safe=cleanProfile(input);
+    for(const key of ['avatar','banner']){
+      const incoming=input?.[key];
+      if((incoming===undefined||incoming===null||(typeof incoming==='string'&&!incoming.trim()))&&previous[key])safe[key]=previous[key];
+    }
+    fs.mkdirSync(path.dirname(file),{recursive:true});
+    const tmp=file+'.tmp';
+    try{fs.rmSync(tmp,{force:true});}catch{}
+    fs.writeFileSync(tmp,JSON.stringify(safe),'utf8');
+    try{fs.renameSync(tmp,file);}catch{try{fs.rmSync(file,{force:true});}catch{}fs.renameSync(tmp,file);}
+    return safe;
+  });
+})();
+
+
+/* ESTUDEX_V190_CLEANROOM_NATIVE_MEDIA_MAIN */
+/* ESTUDEX_V1010_EXACT_NATIVE_CAPTURE_PICKER */
+(function installEstudexCleanroomMediaIpc(){
+  const safeCaptureSourceV1010 = source => ({
+    id:String(source?.id || ''),
+    name:String(source?.name || source?.label || 'Fonte'),
+    label:String(source?.label || source?.name || 'Fonte'),
+    kind:source?.kind === 'screen' ? 'screen':'window',
+    displayId:String(source?.displayId || ''),
+    displayIndex:Number.isFinite(Number(source?.displayIndex)) ? Number(source.displayIndex) : null,
+    isPrimary:Boolean(source?.isPrimary)
+  });
+  try { ipcMain.removeHandler?.('cleanroom:capture:get-sources'); } catch {}
+  try { ipcMain.removeHandler?.('cleanroom:capture:pick-source'); } catch {}
+  ipcMain.handle('cleanroom:capture:get-sources', async () => {
+    const sources = await getSources();
+    return Array.isArray(sources) ? sources : [];
+  });
+  ipcMain.handle('cleanroom:capture:pick-source', async () => {
+    const sources = (await getSources()).filter(source => source?.id);
+    if (!sources.length) return null;
+    const { Menu: EstudexCaptureMenuV1010 } = require('electron');
+    return new Promise(resolve => {
+      let settled = false;
+      const done = value => { if (settled) return; settled = true; resolve(value || null); };
+      const screens = sources.filter(source => source.kind === 'screen');
+      const windows = sources.filter(source => source.kind !== 'screen');
+      const items = [];
+      if (screens.length) {
+        items.push({label:'Telas',enabled:false});
+        for (const source of screens) {
+          items.push({label:String(source.label || source.name || 'Tela'),click:()=>done(safeCaptureSourceV1010(source))});
+        }
+      }
+      if (screens.length && windows.length) items.push({type:'separator'});
+      if (windows.length) {
+        items.push({label:'Janelas',enabled:false});
+        for (const source of windows) {
+          items.push({label:String(source.label || source.name || 'Janela'),click:()=>done(safeCaptureSourceV1010(source))});
+        }
+      }
+      const menu = EstudexCaptureMenuV1010.buildFromTemplate(items);
+      const parent = mainWindow && !mainWindow.isDestroyed?.() ? mainWindow : (BrowserWindow.getFocusedWindow?.() || undefined);
+      menu.popup({window:parent,callback:()=>done(null)});
+    });
+  });
+})();
+
+
+/* ESTUDEX_V190_CLEANROOM_NATIVE_RADMIN_MAIN
+   Existing Radmin helper IPC remains authoritative. The cleanroom preload
+   exposes it explicitly without legacy DOM click listeners. */
+
+
+/* ESTUDEX_V190_CLEANROOM_NATIVE_UPDATER_MAIN */
+(function installEstudexCleanroomUpdaterIpc(){
+  const snapshot = () => ({
+    currentVersion:String(app.getVersion() || ''),
+    checking:Boolean(blazerxUpdateCheckRunning),
+    available:Boolean(blazerxReadyUpdate && blazerxReadyUpdate.installerPath),
+    version:String(blazerxReadyUpdate?.version || ''),
+    packaged:Boolean(app.isPackaged)
+  });
+  try { ipcMain.removeHandler?.('cleanroom:update:get-state'); } catch {}
+  try { ipcMain.removeHandler?.('cleanroom:update:check'); } catch {}
+  try { ipcMain.removeHandler?.('cleanroom:update:install'); } catch {}
+  ipcMain.handle('cleanroom:update:get-state', async () => snapshot());
+  ipcMain.handle('cleanroom:update:check', async () => {
+    await blazerxCheckForUpdates({throwOnError:true});
+    return snapshot();
+  });
+  ipcMain.handle('cleanroom:update:install', async () => {
+    const ready = Boolean(blazerxReadyUpdate && blazerxReadyUpdate.installerPath);
+    if (!ready) return {ok:false, error:'update_not_ready', state:snapshot()};
+    await blazerxInstallReadyUpdate({throwOnError:true});
+    return {ok:true, state:snapshot()};
+  });
+})();
+
+
+/* ESTUDEX_V194_RADMIN_MIGRATION_REPAIR */
+(() => {
+  'use strict';
+  const markerPathV194 = () => path.join(app.getPath('userData'), 'estudex-v194-radmin-repair.json');
+  const migrationDoneV194 = () => {
+    try {
+      const file = markerPathV194();
+      if (!fs.existsSync(file)) return false;
+      const value = JSON.parse(fs.readFileSync(file, 'utf8') || '{}');
+      return value?.ok === true;
+    } catch { return false; }
+  };
+  const rememberMigrationV194 = result => {
+    try {
+      const file = markerPathV194();
+      fs.mkdirSync(path.dirname(file), {recursive:true});
+      fs.writeFileSync(file, JSON.stringify({ok:true, repairedAt:Date.now(), code:Number(result?.code || 0)}), 'utf8');
+    } catch {}
+  };
+  const previousConfigureRadminFirewallV194 = configureRadminFirewall;
+  configureRadminFirewall = async function configureRadminFirewallMigrationV194() {
+    if (migrationDoneV194()) return previousConfigureRadminFirewallV194();
+    if (typeof radminElevationArmedUntil === 'number' && Date.now() > radminElevationArmedUntil) {
+      return {ok:false, needsAuthorization:true, migrationRepair:true};
+    }
+    if (typeof radminElevationArmedUntil === 'number') radminElevationArmedUntil = 0;
+    const result = await runElevatedRadminFirewall();
+    if (result?.ok) {
+      rememberMigrationV194(result);
+      return {...result, prepared:true, migrationRepair:true};
+    }
+    return {...(result || {}), ok:false, migrationRepair:true};
+  };
+})();
+
+
+/* ESTUDEX_V193_SPEC_NATIVE_IDENTITY_PROGRESS */
+(function installEstudexSpecProgress(){
+  const progressPath=()=>path.join(app.getPath('userData'),'estudex-achievements-v1.json');
+  const normalize=input=>{
+    const list=Array.isArray(input?.unlocked)?input.unlocked:[];
+    const unique=new Map();
+    for(const raw of list){
+      const id=String(raw?.id||'').replace(/[^a-z0-9-]/gi,'').slice(0,64);
+      if(id)unique.set(id,{id,unlockedAt:Math.max(0,Number(raw?.unlockedAt||Date.now()))});
+    }
+    return {unlocked:[...unique.values()].slice(0,200)};
+  };
+  const load=()=>{try{const file=progressPath();return fs.existsSync(file)?normalize(JSON.parse(fs.readFileSync(file,'utf8')||'{}')):normalize({});}catch{return normalize({});}};
+  const save=value=>{const safe=normalize(value);const file=progressPath();fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,JSON.stringify(safe),'utf8');return safe;};
+  for(const channel of ['estudex:achievements:get','estudex:achievements:unlock']){try{ipcMain.removeHandler?.(channel);}catch{}}
+  ipcMain.handle('estudex:achievements:get',async()=>load());
+  ipcMain.handle('estudex:achievements:unlock',async(_event,idInput)=>{
+    const id=String(idInput||'').replace(/[^a-z0-9-]/gi,'').slice(0,64);
+    if(!id)throw new Error('achievement_id_invalid');
+    const state=load();
+    if(!state.unlocked.some(item=>item.id===id))state.unlocked.push({id,unlockedAt:Date.now()});
+    return save(state);
+  });
+})();
+
+
+/* ESTUDEX_V193_SPEC_RADMIN_EXTERNAL_GUIDE */
+(function installEstudexRadminExternalGuide(){
+  const channel='estudex:radmin:open-official-guide-v193';
+  try{ipcMain.removeHandler?.(channel);}catch{}
+  ipcMain.handle(channel,async()=>{
+    const url='https://www.radmin-vpn.com/br/';
+    await require('electron').shell.openExternal(url);
+    return {ok:true,url};
+  });
+})();
+
+
+/* ESTUDEX_V193_HF5_STABILITY_DIAGNOSTICS */
+(function(){const f=()=>path.join(app.getPath('userData'),'estudex-stability.log'),w=(type,data={})=>{try{fs.appendFileSync(f(),JSON.stringify({at:new Date().toISOString(),type,...data})+'\n');const st=fs.statSync(f());if(st.size>1048576){const t=fs.readFileSync(f(),'utf8');fs.writeFileSync(f(),t.slice(-524288))}}catch{}};app.on('browser-window-created',(_e,win)=>{try{win.webContents.on('render-process-gone',(_x,d)=>{w('render-process-gone',{reason:d?.reason||'',exitCode:Number(d?.exitCode||0)});if(win===mainWindow&&!estudexQuittingV120&&!win.isDestroyed()&&['crashed','oom','abnormal-exit'].includes(String(d?.reason||'')))setTimeout(()=>{try{if(!win.isDestroyed())win.reload()}catch{}},700)})}catch{}try{win.on('unresponsive',()=>w('window-unresponsive'));win.on('responsive',()=>w('window-responsive'))}catch{}});try{app.on('child-process-gone',(_e,d)=>w('child-process-gone',{type:d?.type||'',reason:d?.reason||'',exitCode:Number(d?.exitCode||0)}))}catch{}try{process.on('uncaughtExceptionMonitor',err=>w('uncaught-exception',{message:String(err?.message||err),stack:String(err?.stack||'').slice(0,12000)}))}catch{}})();
+
+
+/* ESTUDEX_V1010_EXACT_NATIVE_ASSET_PERSISTENCE */
+(function installEstudexHotfix9NativeAssetPersistence(){
+  const limits={avatar:3*1024*1024,banner:15*1024*1024,wallpaper:50*1024*1024};
+  const names={avatar:'profile-avatar.bin',banner:'profile-banner.bin',wallpaper:'lobby-wallpaper.bin'};
+  const safeKind=value=>Object.prototype.hasOwnProperty.call(names,String(value||''))?String(value):'';
+  const dir=()=>path.join(app.getPath('userData'),'estudex-assets');
+  const fileFor=kind=>path.join(dir(),names[kind]);
+  const metaFor=kind=>fileFor(kind)+'.json';
+  const replaceFile=(file,data)=>{
+    fs.mkdirSync(path.dirname(file),{recursive:true});
+    const tmp=file+'.tmp';
+    try{fs.rmSync(tmp,{force:true});}catch{}
+    fs.writeFileSync(tmp,data);
+    try{fs.renameSync(tmp,file);}catch{try{fs.rmSync(file,{force:true});}catch{}fs.renameSync(tmp,file);}
+  };
+  for(const channel of ['estudex:asset:save','estudex:asset:load','estudex:asset:delete']){try{ipcMain.removeHandler?.(channel);}catch{}}
+  ipcMain.handle('estudex:asset:save',async(_event,input={})=>{
+    const kind=safeKind(input.kind);if(!kind)throw new Error('asset_kind_invalid');
+    const source=input.data instanceof Uint8Array?input.data:new Uint8Array(input.data||[]);
+    const bytes=Buffer.from(source.buffer,source.byteOffset,source.byteLength);
+    if(!bytes.length||bytes.length>limits[kind])throw new Error('asset_size_invalid');
+    const mime=String(input.mime||'application/octet-stream').slice(0,120);
+    replaceFile(fileFor(kind),bytes);
+    replaceFile(metaFor(kind),JSON.stringify({mime,size:bytes.length,updatedAt:Date.now()}));
+    return {ok:true,size:bytes.length,mime};
+  });
+  ipcMain.handle('estudex:asset:load',async(_event,kindInput)=>{
+    const kind=safeKind(kindInput);if(!kind)return null;
+    const file=fileFor(kind);if(!fs.existsSync(file))return null;
+    let meta={};try{meta=JSON.parse(fs.readFileSync(metaFor(kind),'utf8')||'{}');}catch{}
+    const data=fs.readFileSync(file);
+    if(!data.length||data.length>limits[kind])return null;
+    return {ok:true,data,mime:String(meta.mime||'application/octet-stream'),size:data.length};
+  });
+  ipcMain.handle('estudex:asset:delete',async(_event,kindInput)=>{
+    const kind=safeKind(kindInput);if(!kind)return {ok:false};
+    for(const file of [fileFor(kind),metaFor(kind)]){try{fs.rmSync(file,{force:true});}catch{}}
+    return {ok:true};
+  });
+})();
+
+/* ESTUDEX_V1010_EXACT_SQUIRREL_IDENTITY_HARDENING_APPLIED */
+
+
+/* ESTUDEX_V1010_EXACT_WINDOW_SHELL_MAIN */
+(function installEstudexV1010ExactWindowShell(){
+  const getWindow=()=>mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  for(const channel of [
+    'estudex:window:minimize',
+    'estudex:window:toggle-maximize',
+    'estudex:window:close'
+  ]){
+    try{ipcMain.removeHandler?.(channel);}catch{}
+  }
+  ipcMain.handle('estudex:window:minimize',async()=>{
+    const win=getWindow();
+    if(!win)return {ok:false};
+    win.minimize();
+    return {ok:true};
+  });
+  ipcMain.handle('estudex:window:toggle-maximize',async()=>{
+    const win=getWindow();
+    if(!win)return {ok:false,maximized:false};
+    if(win.isMaximized())win.unmaximize();else win.maximize();
+    return {ok:true,maximized:win.isMaximized()};
+  });
+  ipcMain.handle('estudex:window:close',async()=>{
+    const win=getWindow();
+    if(!win)return {ok:false};
+    win.close();
+    return {ok:true};
+  });
+})();
+
+
+/* ESTUDEX_V1010_EXACT_TRAY_SINGLE_INSTANCE_ICONS */
+(function installEstudexExactTrayAndWindowsIcons(){
+  const {nativeImage}=require('electron');
+  const exactIcon=path.join(__dirname,'resources','estudex.ico');
+  const applyWindowIcon=win=>{
+    try{
+      if(!win||win.isDestroyed()||!fs.existsSync(exactIcon))return;
+      const image=nativeImage.createFromPath(exactIcon);
+      if(!image.isEmpty())win.setIcon(image);
+    }catch{}
+  };
+  app.on('browser-window-created',(_event,win)=>setTimeout(()=>applyWindowIcon(win),0));
+  setTimeout(()=>applyWindowIcon(mainWindow),0);
+
+  function ensureWindowsInstalledIcons(){
+    if(process.platform!=='win32')return;
+    try{
+      const installRoot=path.resolve(path.dirname(process.execPath),'..');
+      if(!fs.existsSync(path.join(installRoot,'Update.exe')))return;
+      const displayIcon=process.execPath+',0';
+      const uninstallRoot='HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall';
+      const search=spawnSync('reg.exe',['query',uninstallRoot,'/s','/f','ESTUDEX','/d'],{windowsHide:true,encoding:'utf8'});
+      if(search.status!==0||!search.stdout)return;
+      const keys=[...new Set(search.stdout.split(/\r?\n/).map(line=>line.trim()).filter(line=>/^HKEY_CURRENT_USER\\/i.test(line)&&/\\Uninstall\\/i.test(line)))];
+      for(const key of keys){
+        const name=spawnSync('reg.exe',['query',key,'/v','DisplayName'],{windowsHide:true,encoding:'utf8'});
+        if(name.status!==0||!(/ESTUDEX/i.test(name.stdout||'')))continue;
+        spawnSync('reg.exe',['add',key,'/v','DisplayIcon','/t','REG_SZ','/d',displayIcon,'/f'],{windowsHide:true,stdio:'ignore'});
+      }
+    }catch{}
+  }
+  app.whenReady().then(()=>setTimeout(ensureWindowsInstalledIcons,1200)).catch(()=>{});
+})();
+
+
+/* ESTUDEX_V193_SQUIRREL_UNINSTALL_REPAIR_RUNTIME */
+(function installEstudexSquirrelUninstallRepair(){
+  if(process.platform!=='win32')return;
+  const {spawnSync}=require('child_process');
+  const regRoot='HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall';
+  const currentKey=regRoot+'\\blazerx';
+  const legacyKey=regRoot+'\\estudex';
+  const run=(args)=>{
+    try{return spawnSync('reg.exe',args,{encoding:'utf8',windowsHide:true,timeout:5000});}
+    catch{return null;}
+  };
+  const query=(key,value)=>{
+    const result=run(['query',key,'/v',value]);
+    if(!result||result.status!==0)return '';
+    const text=String(result.stdout||'');
+    const match=text.match(new RegExp('\\s'+value+'\\s+REG_[A-Z0-9_]+\\s+(.+)$','mi'));
+    return String(match?.[1]||'').trim();
+  };
+  const setString=(key,name,value)=>{
+    const text=String(value??'').trim();
+    if(!text)return false;
+    const result=run(['add',key,'/v',name,'/t','REG_SZ','/d',text,'/f']);
+    return Boolean(result&&result.status===0);
+  };
+  const setDword=(key,name,value)=>{
+    const result=run(['add',key,'/v',name,'/t','REG_DWORD','/d',String(value),'/f']);
+    return Boolean(result&&result.status===0);
+  };
+  const log=(message,extra='')=>{try{console.log('[ESTUDEX uninstall repair]',message,extra);}catch{}};
+
+  const repair=()=>{
+    try{
+      if(!app?.isPackaged)return;
+      const exe=process.execPath;
+      const appDir=path.dirname(exe);
+      const installRoot=path.resolve(appDir,'..');
+      const updateExe=path.join(installRoot,'Update.exe');
+      if(!fs.existsSync(updateExe)){log('Update.exe missing; registry repair skipped',updateExe);return;}
+
+      const version=String(app.getVersion?.()||'').trim();
+      const rootLauncher=path.join(installRoot,'ESTUDEX.exe');
+      const icon=fs.existsSync(rootLauncher)?rootLauncher:exe;
+      const uninstall='"'+updateExe+'" --uninstall';
+      const quietUninstall='"'+updateExe+'" --uninstall -s';
+
+      run(['add',currentKey,'/f']);
+      setString(currentKey,'DisplayName','ESTUDEX');
+      setString(currentKey,'Publisher','ESTUDEX');
+      if(version)setString(currentKey,'DisplayVersion',version);
+      setString(currentKey,'InstallLocation',installRoot);
+      setString(currentKey,'DisplayIcon',icon);
+      setString(currentKey,'UninstallString',uninstall);
+      setString(currentKey,'QuietUninstallString',quietUninstall);
+      setDword(currentKey,'NoModify',1);
+      setDword(currentKey,'NoRepair',1);
+
+      const legacyName=query(legacyKey,'DisplayName').toLocaleLowerCase('pt-BR');
+      if(legacyName==='estudex'){
+        const legacyUninstall=query(legacyKey,'UninstallString');
+        const legacyLocation=query(legacyKey,'InstallLocation');
+        const proof=(legacyUninstall+' '+legacyLocation).toLocaleLowerCase('pt-BR');
+        const belongsToEstudex=proof.includes('update.exe')&&(proof.includes('estudex')||proof.includes('blazerx'));
+        if(belongsToEstudex){
+          const removed=run(['delete',legacyKey,'/f']);
+          if(removed?.status===0)log('legacy ESTUDEX uninstall entry removed');
+        }
+      }
+
+      log('current uninstall registration repaired',version);
+    }catch(error){
+      log('repair failed safely',String(error?.message||error));
+    }
+  };
+
+  app.whenReady().then(()=>setTimeout(repair,1200)).catch(()=>{});
+})();
+
+/* ESTUDEX_PWSH_UNINSTALL_VALIDATION_LITERAL const currentKey=regRoot+'\\\\blazerx'; const legacyKey=regRoot+'\\\\estudex'; */
