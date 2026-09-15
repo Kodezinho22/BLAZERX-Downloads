@@ -37,7 +37,7 @@ jobs:
           function Dump-Matches($title, $patterns) {
             Write-Host "===== $title ====="
             Get-ChildItem app/public -Recurse -File -Include *.js,*.html | ForEach-Object {
-              Select-String -Path $_.FullName -Pattern $patterns -Context 18,28 -ErrorAction SilentlyContinue
+              Select-String -Path $_.FullName -Pattern $patterns -SimpleMatch -Context 18,28 -ErrorAction SilentlyContinue
             } | Select-Object -First 220 | ForEach-Object {
               Write-Host ("--- {0}:{1}" -f $_.Path,$_.LineNumber)
               $_.Context.PreContext | ForEach-Object { Write-Host $_ }
@@ -47,8 +47,8 @@ jobs:
           }
 
           Dump-Matches 'CLOUD BASE / FALLBACK / REQUEST' @(
-            'resolveBase','backendBase','estudexserver-2mccfr6f','site--estudex-server--bs292kkyk4sm','localStorage','fetch\\(','AbortController','timeout','Failed to fetch'
+            'resolveBase','backendBase','estudexserver-2mccfr6f','site--estudex-server--bs292kkyk4sm','localStorage','fetch(','AbortController','timeout','Failed to fetch'
           )
           Dump-Matches 'AUTH UI / REGISTER / GUEST / LOGIN' @(
-            'Criar conta','Visitante','register\\(','guest\\(','login\\(','authError','error.message','Failed to fetch'
+            'Criar conta','Visitante','register(','guest(','login(','authError','error.message','Failed to fetch'
           )
