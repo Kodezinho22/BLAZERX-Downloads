@@ -1,0 +1,14 @@
+'use strict';
+const fs=require('fs'),path=require('path');
+const root=path.resolve(process.argv[2]||process.cwd());
+const read=r=>fs.readFileSync(path.join(root,r),'utf8');
+const must=(v,m)=>{if(!v)throw new Error('Hotfix33 contract: '+m)};
+const pkg=JSON.parse(read('package.json'));
+must(pkg.version==='1.9.37','version');
+const manifest=JSON.parse(read('estudex-hotfix33-manifest.json'));
+must(manifest.hotfix===33,'manifest');
+const compat=read('public/js/estudex-engine-socket-compat.js');
+must(compat.includes('ESTUDEX_V193_HOTFIX33_SINGLE_OWNED_ROOM_OVERLAY'),'marker');
+must(compat.includes('liveRoomGrace.delete(code);'),'grace cleanup');
+must(compat.includes('deletedOwnedRooms.add(code);'),'tombstone');
+console.log('Hotfix33 contract OK');
