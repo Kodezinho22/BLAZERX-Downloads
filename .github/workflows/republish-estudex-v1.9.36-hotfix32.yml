@@ -1,0 +1,65 @@
+name: Republish ESTUDEX Hotfix 32 final verified build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/republish-estudex-v1.9.36-hotfix32.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  republish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RELEASE_TAG: v1.9.36-hotfix32
+      SOURCE_RUN: '34933242457'
+      EXPECTED_SETUP_SHA256: 833a588cdb63ca18ace1b09876efe9cb2887eaa97207f03025449da27f27b1dd
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download final verified Hotfix 32 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "$SOURCE_RUN" --repo Kodezinho22/BLAZERX-Downloads --name ESTUDEX-v1.9.3-Hotfix32-Room-Performance --dir dist
+          test -f dist/ESTUDEX-Setup.exe
+          test -f dist/BLAZERX-Setup.exe
+          actual=$(sha256sum dist/ESTUDEX-Setup.exe | awk '{print $1}')
+          test "$actual" = "$EXPECTED_SETUP_SHA256"
+          echo "Verified final installer: $actual"
+      - name: Replace Hotfix 32 release with final build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release delete "$RELEASE_TAG" --repo Kodezinho22/BLAZERX-Downloads --cleanup-tag --yes || true
+          cat > release-notes-hotfix32.txt <<'EOF'
+          ESTUDEX v1.9.3 — Hotfix 32 Room Performance
+
+          Revisão técnica 1.9.36, construída diretamente sobre o Hotfix 31 publicado e verificado.
+
+          Mudanças principais:
+          - criação de sala responde imediatamente na interface e bloqueia clique duplicado durante a criação;
+          - primeira tentativa de reconnect é imediata, removendo a espera artificial de 650 ms;
+          - conexão nova pula o leave desnecessário quando não existe sala/socket ativo;
+          - voltar para uma sala já conectada usa o fast path local, sem reconstruir a conexão;
+          - lista de salas salvas elimina o fanout de uma consulta de status por sala; backend 0.3.8 entrega status inline;
+          - sessão/@ salvo não é apagado por timeout, rede ou erro temporário durante a inicialização;
+          - backend 0.3.8 mantém no máximo uma sala hospedada ativa por usuário autenticado e reduz validações repetidas de sessão;
+          - preserva identidade simples por @usuário e o home.js/home.css canônico V10.10.
+
+          Backend validado ao vivo no build: ESTUDEX Server v0.3.8 / Back4App Parse
+          Produto: ESTUDEX v1.9.3
+          Revisão técnica: 1.9.36
+          Base verificada: v1.9.35-hotfix31
+
+          SHA-256 do instalador:
+          833a588cdb63ca18ace1b09876efe9cb2887eaa97207f03025449da27f27b1dd
+          EOF
+          gh release create "$RELEASE_TAG" dist/ESTUDEX-Setup.exe dist/BLAZERX-Setup.exe --repo Kodezinho22/BLAZERX-Downloads --target main --title 'ESTUDEX v1.9.3 — Hotfix 32 Room Performance' --notes-file release-notes-hotfix32.txt --latest
