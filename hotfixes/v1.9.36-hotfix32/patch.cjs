@@ -38,6 +38,74 @@ cloud=regexOnce(cloud,
 /  async function listSavedRooms\(\)\{[\s\S]*?\n  \}\n  async function listLiveRooms\(\)\{/,
 `  /* ESTUDEX_V193_HOTFIX32_INLINE_ROOM_STATUS */\n  async function listSavedRooms(){\n    if(!state.token)return[];\n    const data=await request('/api/saved-rooms');\n    const base=state.base||await resolveBase();\n    return (data.rooms||[]).map(r=>{\n      const live=r?.liveRoom&&typeof r.liveRoom==='object'?r.liveRoom:{};\n      const hasInline=data?.statusInline===true;\n      const online=hasInline?Boolean(r.online):Boolean(live?.online);\n      const active=hasInline?Boolean(r.active):Boolean(live?.active);\n      return {\n        room:clean(r.room||r.roomId).toUpperCase(),\n        name:clean(live.name||r.name)||'Sala ESTUDEX',\n        role:r.role==='host'?'host':'member',\n        hostId:clean(live.hostUserId||r.hostId),\n        hostName:clean(live.hostProfile?.name||''),\n        hostAvatar:typeof live.hostProfile?.avatar==='string'?live.hostProfile.avatar:'',\n        hostEndpoint:base,online,active,roomSize:Number(r.roomSize||live.roomSize||0),\n        live:Boolean(live.live),screenLive:Boolean(live.screenLive),\n        updatedAt:Date.parse(r.updatedAt)||Number(live.updatedAt)||Date.now(),\n        createdAt:Date.parse(r.createdAt)||Number(live.createdAt)||Date.now()\n      };\n    }).filter(r=>r.room);\n  }\n  async function listLiveRooms(){`,
 'inline saved-room status');
+
+cloud=once(cloud,
+`  async function restoreSession(){
+    await resolveBase();state.token=await readToken();
+    if(!state.token)return false;
+    try{const data=await request('/api/me');setUser(data.user,{emitProfile:false});return true;}
+    catch{await clearToken();return false;}
+  }`,
+`  /* ESTUDEX_V193_HOTFIX32_SESSION_PRESERVATION */
+  let restoreRetryTimerV1936=null;
+  const invalidStoredSessionV1936=error=>{
+    const status=Number(error?.status||0),code=clean(error?.code).toLowerCase();
+    return status===401||status===403||code==='invalid_session'||code==='auth_required';
+  };
+  async function restoreSession(){
+    await resolveBase();state.token=await readToken();
+    if(!state.token)return false;
+    let lastError=null;
+    for(const delay of [0,180,520]){
+      if(delay)await new Promise(resolve=>setTimeout(resolve,delay));
+      try{const data=await request('/api/me',{timeout:5500});setUser(data.user,{emitProfile:false});return true;}
+      catch(error){
+        lastError=error;
+        if(invalidStoredSessionV1936(error)){await clearToken();return false;}
+      }
+    }
+    // A timeout/network/5xx error is not proof that the saved profile is invalid.
+    // Keep the encrypted token on disk and retry in the background instead of forcing a new @.
+    clearTimeout(restoreRetryTimerV1936);
+    restoreRetryTimerV1936=setTimeout(async()=>{
+      if(!state.token||state.user)return;
+      try{const data=await request('/api/me',{timeout:7000});setUser(data.user,{emitProfile:false});await afterAuth();}
+      catch(error){if(invalidStoredSessionV1936(error)){await clearToken();showAuthOverlay();}}
+    },1400);
+    const pending=new Error(lastError?.message||'Reconectando seu perfil salvo…');
+    pending.code='saved_session_pending';
+    throw pending;
+  }`,
+'preserve saved session on transient startup failure');
+
+cloud=once(cloud,
+`  async function bootstrap(){
+    ensureAuthOverlay();const restored=await restoreSession();
+    if(restored){hideAuthOverlay();await afterAuth();}
+    else showAuthOverlay();
+    state.ready=true;
+  }`,
+`  async function bootstrap(){
+    ensureAuthOverlay();
+    try{
+      const restored=await restoreSession();
+      if(restored){hideAuthOverlay();await afterAuth();}
+      else showAuthOverlay();
+    }catch(error){
+      if(error?.code==='saved_session_pending'&&state.token){
+        // Preserve the already-saved local profile while cloud restoration retries.
+        hideAuthOverlay();
+        try{const local=await previous.profile?.get?.();if(local?.name){
+          const localName=clean(local.name||local.username);
+          try{localStorage.setItem('estudex-profile-username-v193',localName);localStorage.setItem('estudex-test-username',localName);localStorage.setItem('estudex-profile-ready-v193','1');}catch{}
+          try{setIdentityUI?.({...(currentUser||{}),username:localName,about:local.bio||'',status:statusKey(local.status)});}catch{}
+        }}catch{}
+      }else throw error;
+    }
+    state.ready=true;
+  }`,
+'non-destructive bootstrap restore');
+
 cloud=once(cloud,"version:'1.9.31'","version:'1.9.32'",'cloud API version');
 write('public/js/estudex-v193-cloud-social-v1926.js',cloud);
 
@@ -60,7 +128,7 @@ write('forge.config.js',forge);
 const h31=JSON.parse(read('estudex-hotfix31-manifest.json'));
 const manifest={
   product:'ESTUDEX',productVersion:'1.9.3',technicalVersion:'1.9.36',hotfix:32,baseTag:'v1.9.35-hotfix31',
-  mode:'room-input-latency-and-authoritative-single-room',
+  mode:'room-input-latency-single-room-and-session-preservation',
   fixes:[
     'first reconnect attempt starts immediately instead of waiting 650ms',
     'room creation gives instant UI feedback and rejects duplicate create clicks while in flight',
@@ -68,7 +136,9 @@ const manifest={
     'saved room list consumes backend inline presence/status and removes per-room N+1 status requests',
     'same-room navigation fast path remains preserved so reopening an attached room does not reconnect',
     'backend 0.3.8 caches validated sessions briefly and prefers already-authenticated socket identity',
-    'backend keeps a hard one-active-hosted-room-per-authenticated-user invariant'
+    'backend keeps a hard one-active-hosted-room-per-authenticated-user invariant',
+    'saved profile/session is never erased by a temporary network or backend failure during startup',
+    'only an explicit invalid/expired session can send an existing user back to the choose-@ onboarding'
   ],
   backend:{version:'0.3.8',oneActiveHostedRoomPerUser:true,sessionUserCacheMs:30000,inlineSavedRoomStatus:true},
   preserved:{hotfix31:h31.hotfix||31,homeJs:homeJsBefore,homeCss:homeCssBefore}
