@@ -1,0 +1,44 @@
+name: Inspect Hotfix32 room state
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/inspect-hotfix32-room-state.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Recover Hotfix32 app
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release download v1.9.36-hotfix32 --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          New-Item -ItemType Directory -Force -Path setup,nupkg,app | Out-Null
+          & 7z x 'ESTUDEX-Setup.exe' '-osetup' -y | Out-Null
+          $pkg=Get-ChildItem setup -Recurse -Filter 'blazerx-1.9.36-full.nupkg' | Select-Object -First 1
+          if(-not $pkg){throw 'nupkg missing'}
+          & 7z x $pkg.FullName '-onupkg' -y | Out-Null
+          $asar=Get-ChildItem nupkg -Recurse -Filter app.asar | Select-Object -First 1
+          npx --yes @electron/asar extract $asar.FullName app
+      - name: Print room persistence anchors
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $files=@('app/public/js/estudex-engine-socket-compat.js','app/public/js/estudex-v193-cloud-social-v1926.js','app/public/estudex-engine.js')
+          foreach($f in $files){
+            Write-Host "===== $f ====="
+            Select-String -Path $f -Pattern 'pinOwnedRoom|ownedRoom|savedRooms|localStorage|room:joined|room:state|createRoom|publishOwnedRoomAuthority|deleteSavedRoom|listSavedRooms' -Context 5,8 | ForEach-Object { $_.ToString() }
+          }
