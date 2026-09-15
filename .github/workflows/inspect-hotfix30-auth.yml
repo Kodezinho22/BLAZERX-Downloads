@@ -1,0 +1,54 @@
+name: Inspect ESTUDEX Hotfix 30 Auth Connectivity
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/inspect-hotfix30-auth.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Recover Hotfix 29 client and inspect auth/network code
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download v1.9.33-hotfix29 --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          New-Item -ItemType Directory -Force -Path setup,nupkg,app | Out-Null
+          & 7z x 'ESTUDEX-Setup.exe' '-osetup' -y | Out-Null
+          $pkg = Get-ChildItem setup -Recurse -Filter 'blazerx-1.9.33-full.nupkg' | Select-Object -First 1
+          if (-not $pkg) { throw 'Hotfix 29 nupkg not found.' }
+          & 7z x $pkg.FullName '-onupkg' -y | Out-Null
+          $asar = Get-ChildItem nupkg -Recurse -Filter 'app.asar' | Select-Object -First 1
+          if (-not $asar) { throw 'Hotfix 29 app.asar not found.' }
+          npx --yes @electron/asar extract $asar.FullName app
+
+          function Dump-Matches($title, $patterns) {
+            Write-Host "===== $title ====="
+            Get-ChildItem app/public -Recurse -File -Include *.js,*.html | ForEach-Object {
+              Select-String -Path $_.FullName -Pattern $patterns -Context 18,28 -ErrorAction SilentlyContinue
+            } | Select-Object -First 220 | ForEach-Object {
+              Write-Host ("--- {0}:{1}" -f $_.Path,$_.LineNumber)
+              $_.Context.PreContext | ForEach-Object { Write-Host $_ }
+              Write-Host ('>>> ' + $_.Line)
+              $_.Context.PostContext | ForEach-Object { Write-Host $_ }
+            }
+          }
+
+          Dump-Matches 'CLOUD BASE / FALLBACK / REQUEST' @(
+            'resolveBase','backendBase','estudexserver-2mccfr6f','site--estudex-server--bs292kkyk4sm','localStorage','fetch\\(','AbortController','timeout','Failed to fetch'
+          )
+          Dump-Matches 'AUTH UI / REGISTER / GUEST / LOGIN' @(
+            'Criar conta','Visitante','register\\(','guest\\(','login\\(','authError','error.message','Failed to fetch'
+          )
