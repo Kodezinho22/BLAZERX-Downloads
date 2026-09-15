@@ -26,6 +26,10 @@ engine=once(engine,
 "  /* ESTUDEX_V193_HOTFIX32_ROOM_INPUT_LATENCY */\n  const ROOM_RECONNECT_DELAYS=[0,350,900,1800];",
 'immediate first reconnect');
 engine=once(engine,
+"    }else{\n      cancelRoomReconnect();\n      await leaveRoom({reason:'switch',manual:false,preserveTarget:true});\n    }",
+"    }else{\n      cancelRoomReconnect();\n      if(roomState.connected||roomState.connecting||socket)await leaveRoom({reason:'switch',manual:false,preserveTarget:true});\n    }",
+'skip redundant leave before fresh connect');
+engine=once(engine,
 "    if (role === 'host' && !signalingBase) signalingBase = await registerSocial();",
 "    if (role === 'host' && !signalingBase) signalingBase = estudexCloudRoomBaseV1924();\n    if (role === 'host' && !signalingBase) signalingBase = await registerSocial();",
 'host endpoint fast path');
@@ -36,8 +40,8 @@ must(cloud.includes('ESTUDEX_V193_HOTFIX31_SIMPLE_HANDLE_UI'),'Hotfix31 cloud ba
 must(!cloud.includes('ESTUDEX_V193_HOTFIX32_INLINE_ROOM_STATUS'),'Hotfix32 cloud patch already applied');
 cloud=regexOnce(cloud,
 /  async function listSavedRooms\(\)\{[\s\S]*?\n  \}\n  async function listLiveRooms\(\)\{/,
-`  /* ESTUDEX_V193_HOTFIX32_INLINE_ROOM_STATUS */\n  async function listSavedRooms(){\n    if(!state.token)return[];\n    const data=await request('/api/saved-rooms');\n    const base=state.base||await resolveBase();\n    return (data.rooms||[]).map(r=>{\n      const live=r?.liveRoom&&typeof r.liveRoom==='object'?r.liveRoom:{};\n      const hasInline=data?.statusInline===true;\n      const online=hasInline?Boolean(r.online):Boolean(live?.online);\n      const active=hasInline?Boolean(r.active):Boolean(live?.active);\n      return {\n        room:clean(r.room||r.roomId).toUpperCase(),\n        name:clean(live.name||r.name)||'Sala ESTUDEX',\n        role:r.role==='host'?'host':'member',\n        hostId:clean(live.hostUserId||r.hostId),\n        hostName:clean(live.hostProfile?.name||''),\n        hostAvatar:typeof live.hostProfile?.avatar==='string'?live.hostProfile.avatar:'',\n        hostEndpoint:base,online,active,roomSize:Number(r.roomSize||live.roomSize||0),\n        live:Boolean(live.live),screenLive:Boolean(live.screenLive),\n        updatedAt:Date.parse(r.updatedAt)||Number(live.updatedAt)||Date.now(),\n        createdAt:Date.parse(r.createdAt)||Number(live.createdAt)||Date.now()\n      };\n    }).filter(r=>r.room);\n  }\n  async function listLiveRooms(){`,
-'inline saved-room status');
+`  /* ESTUDEX_V193_HOTFIX32_INLINE_ROOM_STATUS */\n  async function listSavedRooms(){\n    if(!state.token)return[];\n    const data=await request('/api/saved-rooms');\n    const base=state.base||await resolveBase();\n    let fallbackLiveByCode=new Map();\n    if(data?.statusInline!==true){\n      try{\n        const liveData=await request('/api/rooms/live',{auth:false,timeout:2400});\n        fallbackLiveByCode=new Map((liveData.rooms||[]).map(room=>[clean(room.room||room.roomId).toUpperCase(),room]));\n      }catch{}\n    }\n    return (data.rooms||[]).map(r=>{\n      const code=clean(r.room||r.roomId).toUpperCase();\n      const live=(r?.liveRoom&&typeof r.liveRoom==='object'?r.liveRoom:null)||fallbackLiveByCode.get(code)||{};\n      const hasInline=data?.statusInline===true;\n      const foundFallback=fallbackLiveByCode.has(code);\n      const online=hasInline?Boolean(r.online):foundFallback;\n      const active=hasInline?Boolean(r.active):Boolean(foundFallback&&live.active!==false);\n      return {\n        room:code,name:clean(live.name||r.name)||'Sala ESTUDEX',\n        role:r.role==='host'?'host':'member',hostId:clean(live.hostUserId||r.hostId),\n        hostName:clean(live.hostProfile?.name||''),hostAvatar:typeof live.hostProfile?.avatar==='string'?live.hostProfile.avatar:'',\n        hostEndpoint:base,online,active,roomSize:Number(r.roomSize||live.roomSize||0),\n        live:Boolean(live.live),screenLive:Boolean(live.screenLive),\n        updatedAt:Date.parse(r.updatedAt)||Number(live.updatedAt)||Date.now(),\n        createdAt:Date.parse(r.createdAt)||Number(live.createdAt)||Date.now()\n      };\n    }).filter(r=>r.room);\n  }\n  async function listLiveRooms(){`,
+'inline status with one-request compatibility fallback');
 
 cloud=once(cloud,
 `  async function restoreSession(){
@@ -64,8 +68,6 @@ cloud=once(cloud,
         if(invalidStoredSessionV1936(error)){await clearToken();return false;}
       }
     }
-    // A timeout/network/5xx error is not proof that the saved profile is invalid.
-    // Keep the encrypted token on disk and retry in the background instead of forcing a new @.
     clearTimeout(restoreRetryTimerV1936);
     restoreRetryTimerV1936=setTimeout(async()=>{
       if(!state.token||state.user)return;
@@ -93,12 +95,10 @@ cloud=once(cloud,
       else showAuthOverlay();
     }catch(error){
       if(error?.code==='saved_session_pending'&&state.token){
-        // Preserve the already-saved local profile while cloud restoration retries.
         hideAuthOverlay();
         try{const local=await previous.profile?.get?.();if(local?.name){
           const localName=clean(local.name||local.username);
           try{localStorage.setItem('estudex-profile-username-v193',localName);localStorage.setItem('estudex-test-username',localName);localStorage.setItem('estudex-profile-ready-v193','1');}catch{}
-          try{setIdentityUI?.({...(currentUser||{}),username:localName,about:local.bio||'',status:statusKey(local.status)});}catch{}
         }}catch{}
       }else throw error;
     }
@@ -131,16 +131,15 @@ const manifest={
   mode:'room-input-latency-single-room-and-session-preservation',
   fixes:[
     'first reconnect attempt starts immediately instead of waiting 650ms',
+    'fresh room connection skips a redundant leave path when there is no active room socket',
     'room creation gives instant UI feedback and rejects duplicate create clicks while in flight',
     'host connection uses the official room endpoint immediately before any legacy discovery fallback',
-    'saved room list consumes backend inline presence/status and removes per-room N+1 status requests',
+    'saved rooms eliminate per-room status fanout: 0.3.7 uses one live-directory fallback and 0.3.8 can provide inline status',
     'same-room navigation fast path remains preserved so reopening an attached room does not reconnect',
-    'backend 0.3.8 caches validated sessions briefly and prefers already-authenticated socket identity',
-    'backend keeps a hard one-active-hosted-room-per-authenticated-user invariant',
-    'saved profile/session is never erased by a temporary network or backend failure during startup',
-    'only an explicit invalid/expired session can send an existing user back to the choose-@ onboarding'
+    'server-side one-active-hosted-room-per-authenticated-user rule is preserved',
+    'saved profile/session is not erased by temporary network/backend failure during startup'
   ],
-  backend:{version:'0.3.8',oneActiveHostedRoomPerUser:true,sessionUserCacheMs:30000,inlineSavedRoomStatus:true},
+  backend:{minimumVersion:'0.3.7',optimizedVersion:'0.3.8',oneActiveHostedRoomPerUser:true},
   preserved:{hotfix31:h31.hotfix||31,homeJs:homeJsBefore,homeCss:homeCssBefore}
 };
 fs.writeFileSync(path.join(root,'estudex-hotfix32-manifest.json'),JSON.stringify(manifest,null,2)+'\n','utf8');
