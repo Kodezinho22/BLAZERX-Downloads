@@ -1,0 +1,832 @@
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-engine-media-bindings.js LINE=170
+  syncRoomPeerTracks = async function exactEngineNoPrototypePeerTracks() {};
+  syncAllRoomPeerTracks = async function exactEngineNoPrototypePeers() {};
+  emitRoomWebRTCSignal = function exactEngineNoPrototypeSignal() {};
+  createRoomPeer = function exactEngineNoPrototypePeer() { return null; };
+  closeRoomPeer = function exactEngineCloseRoomPeer(clientId) {
+    const id = clean(clientId);
+    remoteVisual.delete(id);
+    roomWebRTCState.remoteStreams.delete(id);
+    detachRemoteVoice(id);
+    if (roomWebRTCState.selectedMemberId === id) roomWebRTCState.selectedMemberId = null;
+  };
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-engine-media-bindings.js LINE=180
+  };
+  resetRoomWebRTC = function exactEngineResetRoomMediaView() {
+    clearRemoteMedia();
+    roomWebRTCState.roomCode = null;
+    updateStagePreview();
+  };
+
+  /* Media-status is already sent by the engine; this remains a UI refresh hook only. */
+  emitLocalRoomMediaState = function exactEngineMediaStateRefresh() {
+    syncLocalFlags();
+    for (const player of remoteAudioPlayers.values()) applyRemoteAudioPlayer(player);
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-engine-profile-bootstrap.js LINE=146
+      ]);
+      const codes=loadCodes();
+      for(const room of savedRooms||[]){
+        if(room?.role==='host'||room?.isMine){
+          const code=clean(room?.room||room?.roomId||room?.code).toUpperCase();
+          if(code)codes.add(code);
+        }
+      }
+      const current=E.room?.getState?.();
+      if(current?.role==='host'){
+        const code=clean(current?.roomId||current?.code).toUpperCase();
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-engine-profile-bootstrap.js LINE=152
+        }
+      }
+      const current=E.room?.getState?.();
+      if(current?.role==='host'){
+        const code=clean(current?.roomId||current?.code).toUpperCase();
+        if(code)codes.add(code);
+      }
+      try{localStorage.setItem(CREATED_ROOM_CODES_KEY,JSON.stringify([...codes]));}catch{}
+      profileState.createdRooms=Math.max(Number(profileState.createdRooms||0),codes.size);
+      const roomsEl=document.getElementById('profileCreatedRooms');
+      if(roomsEl)roomsEl.textContent=String(profileState.createdRooms||0);
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-engine-room-lifecycle-bindings.js LINE=33
+    if(closedRooms.has(code)){removeCanonicalLiveRoom(code);return engineSocket;}
+
+    const current=E.room.getState?.() || {};
+    const wasCurrentHost=Boolean(current?.connected&&clean(current.roomId)===code&&current?.role==='host');
+    closingRooms.add(code);
+    removeCanonicalLiveRoom(code);
+
+    Promise.resolve().then(async()=>{
+      if(typeof E.rooms.close!=='function')throw new Error('Motor de encerramento da sala indisponível.');
+      await E.rooms.close(code);
+      closedRooms.add(code);
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-engine-room-lifecycle-bindings.js LINE=74
+    if(!room?.isMine)return;
+
+    const current=E.room.getState?.() || {};
+    if(current?.connected && clean(current.roomId)===code && current?.role==='host')return;
+
+    /* The canonical V10.10 click assumes the owner is still attached. Room Survival
+       allows the owner to leave, so reclaim through the motor and let the original
+       room:joined handler perform all visual navigation/rendering. */
+    event.preventDefault?.();
+    event.stopImmediatePropagation?.();
+    originalEmit('room:join',{code});
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-engine-socket-compat.js LINE=239
+  }
+  function syncAttachedOwnedRoom(){
+    const current=E.room.getState?.() || {};
+    if(current?.connected && current?.role==='host' && clean(current?.roomId))pinOwnedRoom(legacyRoomState(current),true,false);
+  }
+  function applyOwnedRoomAuthority(state){
+    const source=state && typeof state==='object' ? state : {};
+    syncAttachedOwnedRoom();
+    return {
+      ...source,
+      liveRooms:mergePinnedOwnedLive(source.liveRooms || []),
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-engine-socket-compat.js LINE=351
+    await refreshState();
+  }
+
+  async function createRoom(payload = {}) {
+    try {
+      await ensureNetworkReady();
+      const state = await E.rooms.create({name:clean(payload.title || payload.name), limit:Number(payload.limit || 6)});
+      const room = legacyRoomState(state || E.room.getState());
+      pinOwnedRoom(room,true,true);
+      publishOwnedRoomAuthority();
+      fire('room:joined', room);
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-engine-socket-compat.js LINE=367
+  }
+
+  /* ESTUDEX_V193_RECENT_ROOM_COMPAT_FAST_PATH */
+  async function joinRoom(payload = {}) {
+    try {
+      const code=clean(typeof payload === 'string' ? payload : (payload.code || payload.room || payload.roomId)).toUpperCase();
+      if(!code)throw new Error('Código de sala inválido.');
+
+      /* Opening the room we are already attached to must be navigation, not a
+         disconnect + network rediscovery + reconnect cycle. */
+      const current=E.room.getState?.() || {};
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-engine-socket-compat.js LINE=403
+        await E.rooms.close(code);
+      } else {
+        const current=E.room.getState();
+        if(current?.connected && clean(current?.roomId).toUpperCase()===code && current?.role==='host' && typeof E.room.close==='function') {
+          await E.room.close();
+        }
+        await E.rooms.deleteSaved(code);
+      }
+      /* ESTUDEX_V193_ROOM_DELETE_PURGE */
+      forgetOwnedRoom(code);
+      fire('room:deleted',{code,message:'Sala removida.'});
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-engine-socket-compat.js LINE=481
+        switch(name) {
+          case 'presence:join': await updateProfile(payload); break;
+          case 'profile:update': await updateProfile(payload); break;
+          case 'room:create': await createRoom(payload); break;
+          case 'room:join': await joinRoom(payload); break;
+          case 'room:request-state': fire('room:state',legacyRoomState(E.room.getState())); break;
+          case 'room:leave': {
+            const leaving=legacyRoomState(E.room.getState());
+            if(leaving?.owner && leaving?.code){
+              pinOwnedRoom({...leaving,connected:false},false,false);
+              publishOwnedRoomAuthority();
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-engine-socket-compat.js LINE=482
+          case 'presence:join': await updateProfile(payload); break;
+          case 'profile:update': await updateProfile(payload); break;
+          case 'room:create': await createRoom(payload); break;
+          case 'room:join': await joinRoom(payload); break;
+          case 'room:request-state': fire('room:state',legacyRoomState(E.room.getState())); break;
+          case 'room:leave': {
+            const leaving=legacyRoomState(E.room.getState());
+            if(leaving?.owner && leaving?.code){
+              pinOwnedRoom({...leaving,connected:false},false,false);
+              publishOwnedRoomAuthority();
+            }
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-v193-cloud-social-v1926.js LINE=186
+  async function markRead(id){const peerId=clean(id);await request('/api/dm/'+encodeURIComponent(peerId)+'/read',{method:'POST'});const thread=state.dmCache.get(peerId);if(thread)thread.unread=0;emit('dm',{type:'read',peerId});return true;}
+
+  async function listRoomInvites(){if(!state.token)return[];const data=await request('/api/room-invites');state.roomInvites=(data.invites||[]).map(inv=>({id:inv.id,type:'room-invite',senderId:inv.sender?.id,senderProfile:{name:inv.sender?.displayName||inv.sender?.name,avatar:inv.sender?.avatar,bio:inv.sender?.bio,status:inv.sender?.status},payload:{room:inv.roomId,roomName:inv.roomName},createdAt:Date.parse(inv.createdAt)||Date.now(),expiresAt:inv.expiresAt}));return state.roomInvites.map(x=>({...x,payload:{...x.payload},senderProfile:{...x.senderProfile}}));}
+  async function sendRoomInvite(friendId){const current=roomRegistry.room?.getState?.()||{};if(!current.connected||current.role!=='host')throw new Error('Somente o dono da sala pode convidar amigos.');return request('/api/room-invites',{method:'POST',body:{receiverId:clean(friendId),roomId:current.roomId,roomName:current.roomName}});}
+  async function respondRoomInvite(id,decision){const action=decision==='accept'?'accept':'reject';const data=await request('/api/room-invites/'+encodeURIComponent(clean(id))+'/'+action,{method:'POST'});await listRoomInvites();emit('roomInvite',{type:'updated'});return data;}
+  async function sendSocialEvent(receiverId,type,payload){return request('/api/social-events',{method:'POST',body:{receiverId:clean(receiverId),type,payload}});}
+  async function listSocialEvents(types=[]){const q=(types||[]).join(',');const data=await request('/api/social-events'+(q?'?types='+encodeURIComponent(q):''));return data.events||[];}
+  async function ackSocialEvents(ids){return request('/api/social-events/ack',{method:'POST',body:{ids}});}
+
+  /* ESTUDEX_V193_HOTFIX26_RECENT_ROOM_AUTH_GATE */
+  /* ESTUDEX_V193_HOTFIX29_LIVE_ROOM_DIRECTORY */
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-v193-cloud-social-v1926.js LINE=199
+    const data=await request('/api/saved-rooms');
+    const base=state.base||await resolveBase();
+    return Promise.all((data.rooms||[]).map(async r=>{
+      const item={room:r.room,name:r.name,role:r.role==='host'?'host':'member',hostId:r.hostId||'',hostEndpoint:base,online:false,active:false,roomSize:0,updatedAt:Date.parse(r.updatedAt)||Date.now(),createdAt:Date.parse(r.createdAt)||Date.now()};
+      try{const status=await request('/api/rooms/saved/status?room='+encodeURIComponent(r.room),{auth:false,timeout:3200});const live=status?.room||{};item.online=Boolean(status?.available);item.active=Boolean(status?.active);item.roomSize=Number(status?.roomSize||live.roomSize||0);item.name=clean(live.name||item.name)||'Sala ESTUDEX';item.hostId=clean(live.hostUserId||item.hostId);item.hostName=clean(live.hostProfile?.name||'');item.hostAvatar=typeof live.hostProfile?.avatar==='string'?live.hostProfile.avatar:'';}catch{}
+      return item;
+    }));
+  }
+  async function listLiveRooms(){
+    const base=state.base||await resolveBase();
+    try{
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-v193-cloud-social-v1926.js LINE=211
+      return (data.rooms||[]).map(r=>({room:clean(r.room||r.roomId).toUpperCase(),name:clean(r.name)||'Sala ESTUDEX',limit:Number(r.limit||6),roomSize:Number(r.roomSize||0),role:'member',hostId:clean(r.hostUserId),hostName:clean(r.hostProfile?.name)||'Usuário',hostAvatar:typeof r.hostProfile?.avatar==='string'?r.hostProfile.avatar:'',hostEndpoint:base,online:Boolean(r.online!==false),active:Boolean(r.active!==false),live:Boolean(r.live),screenLive:Boolean(r.screenLive),updatedAt:Number(r.updatedAt||Date.now()),createdAt:Number(r.createdAt||Date.now())})).filter(r=>r.room);
+    }catch{return [];}
+  }
+  async function saveCurrentRoom(){const local=await roomRegistry.rooms?.saveCurrent?.();if(!state.token)return local;const current=roomRegistry.room?.getState?.()||{};if(!current.roomId)return local;await request('/api/saved-rooms/'+encodeURIComponent(current.roomId),{method:'PUT',body:{name:current.roomName,role:current.role==='host'?'host':'member',hostId:current.hostId||''}}).catch(()=>{});return local;}
+  async function deleteSavedRoom(value){const room=clean(value?.room||value).toUpperCase();if(state.token&&room)await request('/api/saved-rooms/'+encodeURIComponent(room),{method:'DELETE'}).catch(()=>{});return roomRegistry.rooms?.deleteSaved?.(value);}
+
+  function disconnectSocket(){if(state.socketRetry){clearTimeout(state.socketRetry);state.socketRetry=null;}const ws=state.socket;state.socket=null;if(ws){try{ws.onclose=null;ws.close();}catch{}}}
+  function connectSocket(){
+    disconnectSocket();if(!state.token||!state.base)return;
+    const url=state.base.replace(/^http:/i,'ws:').replace(/^https:/i,'wss:')+'/ws';
+    try{
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-v193-hotfix14-connectivity-media-room.js LINE=43
+  'use strict';
+  const E=globalThis.EstudexEngine;if(!E?.room||!E?.media)return;
+  const timers=new Map(),attempts=new Map();const WATCHDOG_MS=3200,MAX_RECOVERIES=2;let observer=null;
+  const clean=v=>String(v??'').trim();const hostId=s=>clean((s?.members||[]).find(m=>m?.role==='host')?.clientId);
+  const clearWatch=id=>{id=clean(id);const timer=timers.get(id);if(timer)clearTimeout(timer);timers.delete(id);};
+  const clearAll=()=>{for(const id of [...timers.keys()])clearWatch(id);attempts.clear();};
+  const toast=message=>{try{showToast?.(message);}catch{}};
+  /* ESTUDEX_V193_HOTFIX26_REMOTE_WATCHDOG_ONLY */
+  function remoteViewActive(){const exit=document.querySelector('#roomExitRemoteViewButton');if(!exit||exit.classList.contains('hidden'))return false;try{const css=getComputedStyle(exit);return css.display!=='none'&&css.visibility!=='hidden'&&css.opacity!=='0';}catch{return true;}}
+  function failRemote(id){clearWatch(id);if(!remoteViewActive()){attempts.delete(clean(id));return;}const stage=document.querySelector('#roomStageView');stage?.classList.add('v193-hf14-stream-timeout');const exit=document.querySelector('#roomExitRemoteViewButton');if(exit&&!exit.classList.contains('hidden')){try{exit.click();}catch{}}toast('A transmissão não respondeu. A conexão foi reiniciada; selecione o participante para tentar novamente.');}
+  function arm(id,delay=WATCHDOG_MS,reset=false){id=clean(id);if(!id)return;clearWatch(id);if(reset)attempts.delete(id);timers.set(id,setTimeout(async()=>{timers.delete(id);const state=E.room.getState?.()||{};if(!state.connected||!state.streamLive||hostId(state)!==id||!remoteViewActive()){attempts.delete(id);return;}const next=Number(attempts.get(id)||0)+1;attempts.set(id,next);if(next>MAX_RECOVERIES){failRemote(id);return;}try{await E.media.recoverRemote?.(id,'screen');}catch{}arm(id,next===1?2600:3400,false);},Math.max(1200,Number(delay)||WATCHDOG_MS)));}
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-v193-room-actions-hotfix.js LINE=69
+    if(!button)return false;
+    if(!button.id)button.id='roomInviteButton';
+    const state=E.room.getState?.()||{};
+    const enabled=Boolean(state.connected&&state.role==='host');
+    button.disabled=!enabled;
+    button.setAttribute('aria-disabled',enabled?'false':'true');
+    if(button.dataset.estudexInviteBound!=='1'){
+      button.dataset.estudexInviteBound='1';
+      button.addEventListener('click',event=>{
+        event.preventDefault();
+        event.stopPropagation();
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-v193-room-actions-hotfix.js LINE=120
+
+  async function openInvitePicker(){
+    const state=E.room.getState?.()||{};
+    if(!state.connected||state.role!=='host')throw new Error('Somente o dono da sala pode convidar amigos.');
+    installStyle();
+    ensureOutgoingModal().classList.remove('hidden');
+    await renderInviteFriends();
+  }
+
+  async function sendInviteToFriend(id,button){
+    id=clean(id);const key=inviteKey(id);if(!id||!key||sendingInvites.has(key)||sentInvites.has(key))return;
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-v193-room-actions-hotfix.js LINE=154
+    if(activeIncomingId===clean(invite.id)&&!layer.classList.contains('hidden'))return;
+    activeIncomingId=clean(invite.id);
+    layer.dataset.inviteId=activeIncomingId;
+    layer.dataset.roomCode=clean(invite.payload?.room).toUpperCase();
+    q('#incomingRoomInviteTitle',layer).textContent=clean(invite.payload?.roomName)||'Convite para uma sala';
+    const sender=clean(invite.senderProfile?.name)||clean(invite.senderId)||'Um amigo';
+    q('#incomingRoomInviteText',layer).textContent=sender+' convidou você para entrar na sala.';
+    q('#incomingRoomInviteCode',layer).textContent=layer.dataset.roomCode;
+    layer.classList.remove('hidden');
+  }
+
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-v193-room-actions-hotfix.js LINE=158
+    q('#incomingRoomInviteTitle',layer).textContent=clean(invite.payload?.roomName)||'Convite para uma sala';
+    const sender=clean(invite.senderProfile?.name)||clean(invite.senderId)||'Um amigo';
+    q('#incomingRoomInviteText',layer).textContent=sender+' convidou você para entrar na sala.';
+    q('#incomingRoomInviteCode',layer).textContent=layer.dataset.roomCode;
+    layer.classList.remove('hidden');
+  }
+
+  async function dismissIncomingInvite(showMessage=true){
+    const layer=ensureIncomingModal();
+    const id=clean(layer.dataset.inviteId||activeIncomingId);
+    if(id){if(globalThis.EstudexCloudSocial?.respondRoomInvite)await globalThis.EstudexCloudSocial.respondRoomInvite(id,'reject');else await E.social.dismissPending(id);}
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-v193-room-actions-hotfix.js LINE=174
+  async function acceptIncomingInvite(){
+    const layer=ensureIncomingModal();
+    const id=clean(layer.dataset.inviteId||activeIncomingId);
+    const code=clean(layer.dataset.roomCode).toUpperCase();
+    if(!id||!code)return;
+    const button=q('#acceptIncomingRoomInvite',layer);if(button){button.disabled=true;button.textContent='Entrando…';}
+    try{
+      await E.rooms.join(code);
+      if(globalThis.EstudexCloudSocial?.respondRoomInvite)await globalThis.EstudexCloudSocial.respondRoomInvite(id,'accept');else await E.social.dismissPending(id);
+      layer.classList.add('hidden');activeIncomingId='';
+      toast('Entrando na sala '+code+'.');
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-v193-spec-profile.js LINE=104
+
+  function trackAchievements(){
+    E.media?.onChange?.(event=>{const s=event?.state||E.media.getState?.()||{};if(s.screenShareEnabled)unlock('first-screen');if(s.cameraEnabled)unlock('first-camera');});
+    E.room?.onChange?.(event=>{const s=event?.state||E.room.getState?.()||{};if(event?.type==='joined'){if(s.role==='host')unlock('first-room');else unlock('first-join');}const message=event?.message||event?.data?.message;if(event?.type==='chat'&&message?.attachment&&clean(message?.clientId||message?.senderId)===clean(s.clientId))unlock('first-media');});
+    document.addEventListener('click',event=>{if(event.target.closest?.('[data-friend-action="accept"]'))setTimeout(()=>{try{if((E.social.listFriends?.()||[]).length)unlock('first-friend');}catch{}},700);},true);
+    for(const id of ['roomImageInput','roomVideoInput','roomAudioInput'])q('#'+id)?.addEventListener('change',event=>{if(event.target.files?.[0])setTimeout(()=>unlock('first-media'),1200);});
+    q('#roomVoiceButton')?.addEventListener('click',()=>{setTimeout(()=>{const text=clean(q('#roomVoiceButton')?.title).toLocaleLowerCase('pt-BR');if(text.includes('gravar'))return;unlock('first-voice-message');},500);});
+  }
+
+  function hooks(){
+    document.addEventListener('click',event=>{
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-v193-spec-room.js LINE=29
+  }
+
+  function installRoomLimit(){
+    const modal=q('#roomNameModal .modal'),confirm=q('#confirmCreateRoom');if(!modal||!confirm)return false;
+    let block=q('#specRoomLimit',modal);if(!block){block=document.createElement('label');block.id='specRoomLimit';block.className='spec-room-limit';block.innerHTML='<span>Limite de pessoas</span><div class="spec-room-limit-control"><button type="button" data-step="-1" aria-label="Diminuir limite">−</button><strong id="specRoomLimitValue"></strong><button type="button" data-step="1" aria-label="Aumentar limite">+</button></div>';modal.insertBefore(block,confirm);block.addEventListener('click',event=>{const b=event.target.closest('[data-step]');if(!b)return;limit=clampLimit(limit+Number(b.dataset.step));localStorage.setItem(LIMIT_KEY,String(limit));renderLimit();});}
+    renderLimit();
+    try{
+      if(typeof socket!=='undefined'&&socket?.emit&&!socket.emit.__specRoomLimit){const previous=socket.emit.bind(socket);const wrapped=function(name,...args){if(name==='room:create'){const payload=args[0]&&typeof args[0]==='object'?args[0]:{};args[0]={...payload,limit};}return previous(name,...args);};wrapped.__specRoomLimit=true;socket.emit=wrapped;}
+    }catch{}
+    return true;
+  }
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\estudex-v193-spec-room.js LINE=153
+    const wrapped=function(){if(typeof roomPingTimer!=='undefined'&&roomPingTimer)return;return previous();};wrapped.__v193Perf=true;wrapped.__canonical=previous;startRoomPingLoop=wrapped;return true;
+  }
+  installStyle();installRoomLimit();installStageUx();installStableRoomMedia();installIdempotentRoomPing();
+  document.addEventListener('click',event=>{if(event.target.closest?.('#createRoom'))setTimeout(installRoomLimit,0);if(event.target.closest?.('#roomFullscreenButton,#roomExitRemoteViewButton'))setTimeout(installStageUx,20);});
+  E.room.onChange?.(event=>{if(['joined','member-joined','member-left','media-status','stream-status','left','disconnected'].includes(String(event?.type||'')))installStageUx();});
+  globalThis.EstudexV193SpecRoom=Object.freeze({version:'1.3.0',canonicalSafe:true,installRoomLimit,installStageUx,installStableRoomMedia});
+})();
+
+
+/* ESTUDEX_V193_REMOVE_DEAD_ROOM_MORE */
+(() => {
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\home.js LINE=273
+    .forEach(button => {
+      button.addEventListener("click", () => {
+        socket.emit("room:join", {
+          code: button.dataset.roomCode
+        });
+      });
+    });
+}
+
+function renderRecentRooms(rooms) {
+  const container = $("#recentRooms");
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\home.js LINE=476
+
+  currentRoom = data;
+  activeRoomState = null;
+  roomWebRTCState.roomCode = data?.code || null;
+
+  $("#joinModal").classList.add("hidden");
+  $("#roomNameModal").classList.add("hidden");
+
+  $("#codeInput").value = "";
+  $("#roomNameInput").value = "";
+
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\home.js LINE=547
+
+/* criar sala */
+
+$("#createRoom").addEventListener("click", () => {
+  $("#roomNameModal").classList.remove("hidden");
+
+  const fallback =
+    currentUser
+      ? `Sala de ${currentUser.username}`
+      : "";
+
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\home.js LINE=563
+  $("#roomNameModal").classList.add("hidden");
+});
+
+$("#confirmCreateRoom").addEventListener("click", () => {
+  socket.emit("room:create", {
+    title: $("#roomNameInput").value
+  });
+});
+
+$("#roomNameInput").addEventListener("keydown", event => {
+  if (event.key === "Enter") {
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\home.js LINE=571
+
+$("#roomNameInput").addEventListener("keydown", event => {
+  if (event.key === "Enter") {
+    $("#confirmCreateRoom").click();
+  }
+});
+
+/* entrar por código */
+
+$("#openJoin").addEventListener("click", () => {
+  $("#joinModal").classList.remove("hidden");
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\home.js LINE=1340
+
+/* create room */
+
+$("#roomsCreateRoom").addEventListener(
+  "click",
+  () => {
+    $("#roomNameModal")
+      .classList
+      .remove("hidden");
+
+    const fallback =
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\home.js LINE=1552
+  remoteStreams: new Map(),
+  selectedMemberId: null,
+  suppressRemoteAutoSelect: false,
+  roomCode: null
+};
+
+function isOwnRoomMemberId(memberId) {
+  return Boolean(memberId && socket?.id && memberId === socket.id);
+}
+
+function getLocalPrimaryVideoTrack() {
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\home.js LINE=1629
+  });
+}
+
+function createRoomPeer(remoteId) {
+  if (!remoteId || isOwnRoomMemberId(remoteId)) return null;
+
+  const existing = roomWebRTCState.peers.get(remoteId);
+  if (existing?.pc && existing.pc.signalingState !== "closed") {
+    return existing;
+  }
+
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\home.js LINE=1740
+  roomWebRTCState.remoteStreams.clear();
+  roomWebRTCState.selectedMemberId = null;
+  roomWebRTCState.suppressRemoteAutoSelect = false;
+  roomWebRTCState.roomCode = null;
+}
+
+function reconcileRoomPeers() {
+  if (!currentRoom?.code || !activeRoomState?.members || !socket?.id) return;
+
+  if (roomWebRTCState.roomCode && roomWebRTCState.roomCode !== currentRoom.code) {
+    resetRoomWebRTC();
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\home.js LINE=1746
+function reconcileRoomPeers() {
+  if (!currentRoom?.code || !activeRoomState?.members || !socket?.id) return;
+
+  if (roomWebRTCState.roomCode && roomWebRTCState.roomCode !== currentRoom.code) {
+    resetRoomWebRTC();
+  }
+
+  roomWebRTCState.roomCode = currentRoom.code;
+
+  const remoteIds = new Set(
+    activeRoomState.members
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\home.js LINE=1750
+    resetRoomWebRTC();
+  }
+
+  roomWebRTCState.roomCode = currentRoom.code;
+
+  const remoteIds = new Set(
+    activeRoomState.members
+      .map(member => member?.id)
+      .filter(memberId => memberId && !isOwnRoomMemberId(memberId))
+  );
+
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\home.js LINE=1759
+  );
+
+  for (const remoteId of remoteIds) {
+    createRoomPeer(remoteId);
+  }
+
+  for (const remoteId of [...roomWebRTCState.peers.keys()]) {
+    if (!remoteIds.has(remoteId)) {
+      closeRoomPeer(remoteId);
+    }
+  }
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\home.js LINE=1906
+async function handleRoomWebRTCSignal(fromId, signal) {
+  if (!fromId || !signal || !currentRoom?.code) return;
+
+  const peer = createRoomPeer(fromId);
+  if (!peer) return;
+
+  const { pc } = peer;
+
+  try {
+    if (signal.description) {
+      const description = signal.description;
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\home.js LINE=2713
+  $("#roomChatSubtitle").textContent =
+    `${participants.length} online`;
+
+  $("#roomCodeLabel") && ($("#roomCodeLabel").textContent = currentRoom?.code || "—");
+
+  const strip = $("#roomParticipantsStrip");
+
+  if (participants.length) {
+    strip.innerHTML = participants
+      .map(roomParticipantCard)
+      .join("");
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\js\home.js LINE=2940
+    $("#roomSettingsModal").classList.remove("hidden");
+  });
+
+  $("#roomCodeButton")?.addEventListener("click", async () => {
+    const code = currentRoom?.code;
+    if (!code) return;
+
+    try {
+      await navigator.clipboard.writeText(code);
+      showToast("Código da sala copiado.");
+    } catch {
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=1263
+      ws.addEventListener('open',()=>{
+        try{
+          ws.send(JSON.stringify({
+            type:'join', roomId:room, role:'host', profile, ownerKey:socialId,
+            roomName:saved.name, roomLimit:saved.limit
+          }));
+        }catch(error){finish(error);}
+      });
+      ws.addEventListener('message',event=>{
+        let msg=null;
+        try{msg=JSON.parse(String(event.data||''));}catch{return;}
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=1272
+        let msg=null;
+        try{msg=JSON.parse(String(event.data||''));}catch{return;}
+        if(msg?.type==='joined'){
+          if(msg.role!=='host'){
+            finish(new Error('Somente o dono pode encerrar a sala.'));
+            return;
+          }
+          try{
+            closeSent=true;
+            ws.send(JSON.stringify({type:'close-room',ownerKey:socialId}));
+          }catch(error){finish(error);}
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=1415
+    roomState.connecting=true;roomState.error='reconnecting';emitRoom('reconnecting',{attempt:attempt+1});
+    roomReconnectTimer=setTimeout(async()=>{
+      roomReconnectTimer=null;if(manualLeave)return;
+      try{await connectRoom({...target,preserveMedia:true});roomReconnectAttempts=0;emitRoom('reconnected',{attempt:attempt+1});}
+      catch(error){if(!manualLeave)scheduleRoomReconnect(target);}
+    },ROOM_RECONNECT_DELAYS[attempt]);
+  }
+
+  const memberSnapshot = () => [...members.values()].map(member => ({
+    ...member,
+    profile:{...(member.profile || {})},
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=1642
+  /* ESTUDEX_V193_HOTFIX14_EXISTING_MEMBER_MEDIA_OFFER */
+  async function prewarmScreenPeerV194(peerId){
+    const id=String(peerId||'');
+    if(!id||roomState.role!=='host'||!roomState.connected||!roomState.clientId||id===String(roomState.clientId)||localStreams.has('screen'))return false;
+    const key=mediaKey(id,'screen');
+    const existing=outgoingPeers.get(key);
+    if(existing?.prewarmSender&&existing.pc?.signalingState!=='closed'&&!['failed','closed'].includes(String(existing.pc.connectionState||'')))return true;
+    if(screenPrewarmInFlightV194.has(key))return screenPrewarmInFlightV194.get(key);
+    const job=(async()=>{
+      closePeer(outgoingPeers,key);const holder=rtcPeer(id,'screen','out');
+      if(typeof holder.pc.addTransceiver!=='function'){closePeer(outgoingPeers,key);return false;}
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=1657
+    screenPrewarmInFlightV194.set(key,job);return job;
+  }
+  async function prewarmScreenCurrentMembersV194(){
+    if(roomState.role!=='host'||!roomState.connected||localStreams.has('screen'))return false;
+    const ids=[...members.values()].map(member=>String(member?.clientId||'')).filter(id=>id&&id!==String(roomState.clientId||''));
+    await Promise.allSettled(ids.map(prewarmScreenPeerV194));return true;
+  }
+  async function offerLiveKindToCurrentMembersV194(kind) {
+    kind=normalizeKind(kind);
+    if(!kind||!roomState.connected||!localStreams.has(kind))return false;
+    const ids=[...members.values()].map(member=>String(member?.clientId||'')).filter(id=>id&&id!==String(roomState.clientId||''));
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=1752
+      for(const liveKind of ['screen','camera','voice']){
+        if(!localStreams.has(liveKind))continue;
+        sendWs({type:'media-status',kind:liveKind,live:true});
+        if(liveKind==='screen'&&roomState.role==='host')sendWs({type:'stream-status',live:true});
+        Promise.resolve().then(()=>offerLiveKindToCurrentMembersV194(liveKind)).catch(error=>emitMedia('error',{operation:'reconnect-reoffer',kind:liveKind,error:String(error?.message||error)}));
+      }
+      if(roomState.role==='host')Promise.resolve().then(()=>prewarmScreenCurrentMembersV194()).catch(()=>{});
+      return;
+    }
+    if (msg.type === 'member-joined') {
+      const raw = msg.member || {};
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=1755
+        if(liveKind==='screen'&&roomState.role==='host')sendWs({type:'stream-status',live:true});
+        Promise.resolve().then(()=>offerLiveKindToCurrentMembersV194(liveKind)).catch(error=>emitMedia('error',{operation:'reconnect-reoffer',kind:liveKind,error:String(error?.message||error)}));
+      }
+      if(roomState.role==='host')Promise.resolve().then(()=>prewarmScreenCurrentMembersV194()).catch(()=>{});
+      return;
+    }
+    if (msg.type === 'member-joined') {
+      const raw = msg.member || {};
+      const id = String(raw.clientId || '');
+      if (id) {
+        const knownKinds=publishers.get(id) || new Set();
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=1773
+          if(localStreams.has(liveKind))Promise.resolve().then(()=>offerMediaTo(id,liveKind)).catch(error=>emitMedia('error',{operation:'member-joined-offer',kind:liveKind,error:String(error?.message||error)}));
+        }
+      }
+      if(id&&roomState.role==='host'&&!localStreams.has('screen'))Promise.resolve().then(()=>prewarmScreenPeerV194(id)).catch(()=>{});
+      emitRoom('member-joined',{clientId:id});
+      return;
+    }
+    if (msg.type === 'member-left') {
+      const id = String(msg.clientId || msg.memberId || '');
+      members.delete(id);
+      for (const kind of ['screen','camera','voice']) closeMediaKind(id,kind);
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=1880
+    pingTimer = setInterval(tick,5000);
+  }
+
+  async function connectRoom(options = {}) {
+    const token = ++connectToken;
+    const preserveMedia=Boolean(options.preserveMedia);
+    if(preserveMedia){
+      if(pingTimer)clearInterval(pingTimer);pingTimer=null;
+      closeAllPeers();
+      try{socket?.close();}catch{}
+      socket=null;
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=1919
+        roomState.connecting = false;
+        roomState.error = 'join_timeout';
+        emitRoom('error',{code:'join_timeout'});
+        reject(new Error('Tempo esgotado ao entrar na sala.'));
+      },7500);
+      try { socket = new WebSocket(wsBase); }
+      catch (error) { clearTimeout(timeout); roomState.connecting=false; reject(error); return; }
+      const currentSocket = socket;
+      currentSocket.addEventListener('open', () => {
+        if (token !== connectToken) return;
+        sendWs({
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=1996
+    });
+  }
+
+  async function createRoom(options = {}) {
+    const endpoint = estudexCloudRoomBaseV1924();
+    const profile = await getProfile();
+    const room = randomRoomId();
+    const name = cleanRoomName(options.name || ('Sala de ' + profile.name));
+    const limit = cleanLimit(options.limit);
+    await connectRoom({room,role:'host',signalingBase:endpoint,name,limit});
+    await saveCurrentRoom();
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=2002
+    const room = randomRoomId();
+    const name = cleanRoomName(options.name || ('Sala de ' + profile.name));
+    const limit = cleanLimit(options.limit);
+    await connectRoom({room,role:'host',signalingBase:endpoint,name,limit});
+    await saveCurrentRoom();
+    return roomSnapshot();
+  }
+
+  /* ESTUDEX_V193_RECENT_ROOM_FAST_JOIN */
+  async function joinRoom(input = {}) {
+    if (typeof input === 'string') input = {room:input};
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=2008
+  }
+
+  /* ESTUDEX_V193_RECENT_ROOM_FAST_JOIN */
+  async function joinRoom(input = {}) {
+    if (typeof input === 'string') input = {room:input};
+    const room = cleanRoomId(input.room || input.roomId);
+    if (!room) throw new Error('Código de sala inválido.');
+
+    /* Recent rooms are already durable local knowledge. Do not spend several
+       seconds rediscovering LAN/Radmin before trying the endpoint we saved. */
+    let candidate = null;
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=2044
+    if (!signalingBase) throw new Error('Endereço da sala indisponível.');
+
+    try {
+      await connectRoom({room,role,signalingBase,name:candidate.name,limit:candidate.limit});
+    } catch (firstError) {
+      throw firstError;
+    }
+
+    if (role !== 'host') {
+      const profile = await getProfile();
+      cacheSavedRoom({...candidate,hostEndpoint:signalingBase,role:'member',members:[...(candidate.members||[]),{id:socialId,name:profile.name,avatar:profile.avatar}]});
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=2277
+    return stored||null;
+  }
+  async function sendInvite(input) {
+    if(!roomState.connected||roomState.role!=='host')throw new Error('Somente o criador da sala pode enviar convites.');
+    await registerSocial();
+    const deliver=friend=>fetchJson('/api/social/room-invite/send',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({userId:socialId,friendId:String(friend.id),friendEndpoint:String(friend.endpoint).replace(/\/$/,''),room:roomState.roomId,roomName:roomState.roomName,roomLimit:roomState.roomLimit})
+    },8500);
+    let friend=await resolveFriend(input,{deep:false});
+    if(!friend?.id||!friend?.endpoint)friend=await resolveFriend(input,{deep:true});
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=2339
+      room:roomState.roomId,
+      name:roomState.roomName,
+      limit:roomState.roomLimit,
+      role:'host',
+      hostEndpoint:roomState.signalingBase,
+      online:false,
+      active:false,
+      roomSize:0,
+      updatedAt:Date.now()
+    } : null;
+    roomLifecycleToken += 1;
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=2667
+    rooms:Object.freeze({
+      listLan:listLanRooms,
+      listSaved:listSavedRooms,
+      create:createRoom,
+      join:joinRoom,
+      close:closeOwnedRoom,
+      deleteSaved:deleteSavedRoom,
+      saveCurrent:saveCurrentRoom,
+      onChange:fn=>subscribe(roomsListeners,fn)
+    }),
+    room:Object.freeze({
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\estudex-engine.js LINE=2668
+      listLan:listLanRooms,
+      listSaved:listSavedRooms,
+      create:createRoom,
+      join:joinRoom,
+      close:closeOwnedRoom,
+      deleteSaved:deleteSavedRoom,
+      saveCurrent:saveCurrentRoom,
+      onChange:fn=>subscribe(roomsListeners,fn)
+    }),
+    room:Object.freeze({
+      getState:()=>roomSnapshot(),
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\index.html LINE=143
+              <div class="quick-copy">
+                <h2>Criar sala</h2>
+                <p>Crie sua sala e convide seus amigos<br>para estudar.</p>
+                <button id="createRoom">Criar sala</button>
+              </div>
+            </article>
+
+            <article class="quick-card">
+              <div class="quick-icon hash">#</div>
+              <div class="quick-copy">
+                <h2>Entrar com código</h2>
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\index.html LINE=160
+          <section class="dashboard">
+            <article class="panel live-panel">
+              <div class="panel-title">
+                <h3>Salas ao vivo</h3>
+                <button>Ver todas</button>
+              </div>
+              <div id="liveRooms" class="live-list"></div>
+            </article>
+
+            <article class="panel recent-panel">
+              <div class="panel-title">
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\index.html LINE=280
+
+          <section class="rooms-section rooms-live-section">
+            <div class="rooms-section-heading">
+              <h2>Salas ao vivo</h2>
+              <button id="roomsShowAllLive" type="button">Ver todas <span>›</span></button>
+            </div>
+
+            <div class="rooms-live-grid" id="roomsLiveGrid"></div>
+          </section>
+
+          <section class="rooms-section rooms-mine-section">
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\index.html LINE=296
+            <div class="my-rooms-grid">
+              <div id="myRoomsList" class="my-rooms-list"></div>
+
+              <button class="create-room-tile" id="roomsCreateRoom" type="button">
+                <span class="create-room-plus">+</span>
+                <strong>Criar sala</strong>
+                <small>Crie uma nova sala e convide amigos.</small>
+              </button>
+            </div>
+          </section>
+
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\index.html LINE=457
+                  <span id="roomParticipantCount">0 participantes</span>
+                </button>
+
+                <button class="room-top-button room-code-button" id="roomCodeButton" type="button" title="Copiar código da sala">
+                  <svg viewBox="0 0 24 24">
+                    <rect x="6" y="4" width="10" height="14" rx="2"></rect>
+                    <path d="M10 8h6"></path>
+                    <path d="M10 12h6"></path>
+                    <path d="M8 20h8"></path>
+                  </svg>
+                  <span>Código</span>
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\index.html LINE=465
+                    <path d="M8 20h8"></path>
+                  </svg>
+                  <span>Código</span>
+                  <strong id="roomCodeLabel">—</strong>
+                </button>
+
+                <button class="room-top-button" type="button" title="Convidar">
+                  <svg viewBox="0 0 24 24">
+                    <circle cx="8" cy="8" r="3"></circle>
+                    <path d="M3 20c.5-4 2.5-6 5-6"></path>
+                    <path d="M16 8h5M18.5 5.5v5"></path>
+----
+FILE=D:\a\BLAZERX-Downloads\BLAZERX-Downloads\app\public\index.html LINE=1260
+    <h2>Criar sala</h2>
+    <p>Escolha um nome para a sala ao vivo.</p>
+    <input id="roomNameInput" maxlength="60" placeholder="Ex: Estudos de hoje">
+    <button id="confirmCreateRoom" class="modal-primary">Criar sala</button>
+  </div>
+</div>
+
+<div id="joinModal" class="modal-layer hidden">
+  <div class="modal">
+    <button id="closeJoin" class="close">×</button>
+    <div class="modal-hash">#</div>
+----
