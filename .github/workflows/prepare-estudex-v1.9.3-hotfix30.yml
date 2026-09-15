@@ -1,0 +1,190 @@
+name: Publish ESTUDEX v1.9.3 Hotfix 30 Auth Room Stability
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/prepare-estudex-v1.9.3-hotfix30.yml'
+      - 'hotfixes/v1.9.34-hotfix30/**'
+
+permissions:
+  contents: write
+
+jobs:
+  build-publish:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      BASE_TAG: v1.9.33-hotfix29
+      RELEASE_TAG: v1.9.34-hotfix30
+      BASE_SETUP_SHA256: f01d51503201bd102100cc86742ffb950e7b63cdf1b2c686233418603d0c32f5
+      BACKEND_BASE: https://site--estudex-server--bs292kkyk4sm.code.run
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify live ESTUDEX backend 0.3.4 and auth transport
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          const base=process.env.BACKEND_BASE;
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          (async()=>{
+            let health=null;
+            for(let i=1;i<=24;i++){
+              try{
+                const r=await fetch(base+'/health',{cache:'no-store'}); const d=await r.json();
+                if(r.ok&&d.ok&&d.version==='0.3.4'&&d.socialPersistence==='parse'){health=d;break;}
+                console.log('backend not ready',i,d.version,d.socialPersistence);
+              }catch(e){console.log('health failed',i,e.message)}
+              await sleep(10000);
+            }
+            if(!health)throw new Error('Backend 0.3.4 + Parse did not become ready');
+            const pre=await fetch(base+'/api/auth/register',{method:'OPTIONS',headers:{Origin:'https://estudex.app','Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'content-type'}});
+            if(pre.status!==204||pre.headers.get('access-control-allow-origin')!=='*')throw new Error('Auth CORS preflight is not healthy');
+            const invalid=await fetch(base+'/api/auth/register',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({displayName:'Probe',username:'x',email:'bad',password:'1'})});
+            const invalidBody=await invalid.json().catch(()=>({}));
+            if(invalid.status!==400||!String(invalidBody.error||'').includes('@usuário'))throw new Error('Register route does not return structured validation errors');
+            console.log('Backend Hotfix30 ready:',health.version,'CORS=',pre.status,'register=',invalid.status);
+          })().catch(e=>{console.error(e);process.exit(1)});
+          '@ | Set-Content verify-backend-hotfix30.cjs -Encoding utf8
+          node verify-backend-hotfix30.cjs
+
+      - name: Download and verify Hotfix 29 baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release download $env:BASE_TAG --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          $hash=(Get-FileHash 'ESTUDEX-Setup.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($hash -ne $env:BASE_SETUP_SHA256){throw "Hotfix29 baseline SHA mismatch: $hash"}
+          Write-Host "Verified Hotfix29 installer: $hash"
+
+      - name: Recover exact published Hotfix 29 application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path base-setup,base-nupkg,app | Out-Null
+          & 7z x 'ESTUDEX-Setup.exe' '-obase-setup' -y | Out-Null
+          $nupkg=Get-ChildItem base-setup -Recurse -Filter 'blazerx-1.9.33-full.nupkg' | Select-Object -First 1
+          if(-not $nupkg){throw 'Hotfix29 nupkg not found'}
+          & 7z x $nupkg.FullName '-obase-nupkg' -y | Out-Null
+          $asar=Get-ChildItem base-nupkg -Recurse -Filter app.asar | Select-Object -First 1
+          if(-not $asar){throw 'Hotfix29 app.asar not found'}
+          npx --yes @electron/asar extract $asar.FullName app
+          node hotfixes/v1.9.33-hotfix29/contract.cjs app
+          $baseHomeJs=(Get-FileHash 'app/public/js/home.js' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $baseHomeCss=(Get-FileHash 'app/public/css/home.css' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "BASE_HOME_JS=$baseHomeJs" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "BASE_HOME_CSS=$baseHomeCss" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Apply Hotfix 30 auth and room stability patch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          node hotfixes/v1.9.34-hotfix30/patch.cjs app
+          node --check app/public/js/estudex-v193-cloud-social-v1926.js
+          node --check app/public/estudex-engine.js
+          node --check app/public/js/estudex-engine-socket-compat.js
+          node --check app/public/js/home.js
+          node --check app/main.js
+          node --check app/preload.js
+          node hotfixes/v1.9.34-hotfix30/contract.cjs app
+          $homeJs=(Get-FileHash 'app/public/js/home.js' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $homeCss=(Get-FileHash 'app/public/css/home.css' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($homeJs -ne $env:BASE_HOME_JS){throw 'Canonical V10.10 home.js changed'}
+          if($homeCss -ne $env:BASE_HOME_CSS){throw 'Canonical V10.10 home.css changed'}
+
+      - name: Install build dependencies
+        shell: pwsh
+        working-directory: app
+        run: |
+          $ErrorActionPreference='Stop'
+          if(Test-Path node_modules){Remove-Item node_modules -Recurse -Force}
+          npm install --no-audit --no-fund
+
+      - name: Build ESTUDEX technical revision 1.9.34
+        shell: pwsh
+        working-directory: app
+        run: |
+          $ErrorActionPreference='Stop'
+          npx electron-forge make --platform=win32 --arch=x64
+
+      - name: Verify final Hotfix 30 package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path dist,verify-nupkg,verify-app | Out-Null
+          $setup=Get-ChildItem 'app/out/make' -Recurse -Filter 'ESTUDEX-Setup.exe' | Select-Object -First 1
+          $nupkg=Get-ChildItem 'app/out/make' -Recurse -Filter 'blazerx-1.9.34-full.nupkg' | Select-Object -First 1
+          if(-not $setup){throw 'ESTUDEX-Setup.exe was not generated'}
+          if(-not $nupkg){throw 'blazerx-1.9.34-full.nupkg was not generated'}
+          Copy-Item $setup.FullName 'dist/ESTUDEX-Setup.exe' -Force
+          Copy-Item $setup.FullName 'dist/BLAZERX-Setup.exe' -Force
+          Copy-Item $nupkg.FullName 'dist/blazerx-1.9.34-full.nupkg' -Force
+          & 7z x $nupkg.FullName '-overify-nupkg' -y | Out-Null
+          $asar=Get-ChildItem verify-nupkg -Recurse -Filter app.asar | Select-Object -First 1
+          if(-not $asar){throw 'Final app.asar missing'}
+          npx --yes @electron/asar extract $asar.FullName verify-app
+          node hotfixes/v1.9.34-hotfix30/contract.cjs verify-app
+          $homeJs=(Get-FileHash 'verify-app/public/js/home.js' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $homeCss=(Get-FileHash 'verify-app/public/css/home.css' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($homeJs -ne $env:BASE_HOME_JS){throw 'Packaged V10.10 home.js changed'}
+          if($homeCss -ne $env:BASE_HOME_CSS){throw 'Packaged V10.10 home.css changed'}
+          $setupHash=(Get-FileHash 'dist/ESTUDEX-Setup.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "SETUP_SHA256=$setupHash" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "ESTUDEX Hotfix30 installer SHA-256: $setupHash"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESTUDEX-v1.9.3-Hotfix30-Auth-Room-Stability
+          path: |
+            dist/ESTUDEX-Setup.exe
+            dist/BLAZERX-Setup.exe
+            dist/blazerx-1.9.34-full.nupkg
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Publish ESTUDEX v1.9.3 Hotfix 30
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release view $env:RELEASE_TAG --repo Kodezinho22/BLAZERX-Downloads *> $null
+          if($LASTEXITCODE -eq 0){throw "Release $env:RELEASE_TAG already exists; refusing to overwrite"}
+          $notes=@"
+          ESTUDEX v1.9.3 — Hotfix 30 Auth & Room Stability
+
+          Revisão técnica 1.9.34, construída diretamente sobre o Hotfix 29 publicado e verificado.
+
+          Correções principais:
+          - remove o fallback antigo de autenticação b4a.run e embute o backend oficial atual do ESTUDEX;
+          - valida automaticamente o backend por /health e descarta endereço antigo salvo no PC;
+          - faz no máximo uma nova tentativa em falha de transporte, sem loop infinito;
+          - não exibe mais “Failed to fetch”/AbortError cru: erros HTTP reais do backend continuam aparecendo com a mensagem correta e falha de conexão recebe mensagem amigável;
+          - Login, Criar conta e Visitante passam pelo mesmo resolvedor de servidor;
+          - alinha o fallback de Salas com o mesmo backend oficial;
+          - backend 0.3.4 limita uma sala hospedada ativa por conta autenticada;
+          - diretório de Salas ao vivo é deduplicado por host e salas sem host são limpas;
+          - reconnect não insiste quando o servidor informa que a conta já possui outra sala ativa;
+          - preserva Hotfix 29 e o home.js/home.css canônico V10.10.
+
+          Backend validado no build: ESTUDEX Server v0.3.4 / Back4App Parse
+          Produto: ESTUDEX v1.9.3
+          Revisão técnica: 1.9.34
+          Base verificada: v1.9.33-hotfix29
+
+          SHA-256 do instalador:
+          $env:SETUP_SHA256
+          "@
+          Set-Content release-notes-hotfix30.txt $notes -Encoding utf8
+          gh release create $env:RELEASE_TAG 'dist/ESTUDEX-Setup.exe' 'dist/BLAZERX-Setup.exe' --repo Kodezinho22/BLAZERX-Downloads --target main --title 'ESTUDEX v1.9.3 — Hotfix 30 Auth & Room Stability' --notes-file release-notes-hotfix30.txt --latest
