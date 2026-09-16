@@ -1,0 +1,15 @@
+'use strict';
+const fs=require('fs'),path=require('path');
+const root=path.resolve(process.argv[2]||process.cwd());
+const file=path.join(root,'estudex-media-privacy-v1939-manifest.json');
+if(!fs.existsSync(file))throw new Error('Hotfix35: media privacy manifest missing');
+const manifest=JSON.parse(fs.readFileSync(file,'utf8'));
+if(manifest.technicalVersion!=='1.9.39')throw new Error('Hotfix35: expected technical version 1.9.39');
+if(manifest.baseTag!=='v1.9.38-hotfix34')throw new Error('Hotfix35: unexpected base tag');
+manifest.release=true;
+manifest.hotfix=35;
+manifest.tag='v1.9.39-hotfix35';
+manifest.mode='official-media-privacy-and-remote-audio-playback';
+manifest.publishedFrom='validated-v1.9.39-media-privacy-candidate';
+fs.writeFileSync(file,JSON.stringify(manifest,null,2)+'\n','utf8');
+console.log('ESTUDEX Hotfix35 release manifest finalized');
