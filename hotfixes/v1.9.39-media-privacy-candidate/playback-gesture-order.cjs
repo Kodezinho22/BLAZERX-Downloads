@@ -1,0 +1,12 @@
+'use strict';
+const fs=require('fs'),path=require('path');
+const root=path.resolve(process.argv[2]||process.cwd());
+const file=path.join(root,'public/js/home.js');
+let home=fs.readFileSync(file,'utf8');
+const from=`  estudexUnlockRoomAudioFromGestureV1939();\n}, true);`;
+const to=`  estudexUnlockRoomAudioFromGestureV1939();\n});`;
+const count=home.split(from).length-1;
+if(count!==1)throw new Error('ESTUDEX playback gesture order: expected 1 anchor, got '+count);
+home=home.replace(from,to);
+fs.writeFileSync(file,home,'utf8');
+console.log('ESTUDEX remote audio gesture order applied');
