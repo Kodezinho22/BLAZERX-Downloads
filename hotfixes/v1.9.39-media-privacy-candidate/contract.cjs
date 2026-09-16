@@ -61,6 +61,7 @@ must(home.includes('[data-room-member-id]'),'watch-member click participates in 
 must(home.includes('[data-enter-room]'),'open-room click participates in audio unlock');
 must(home.includes('#roomStageVideo'),'stage tap participates in audio unlock');
 must(home.includes('void estudexTryRoomStagePlaybackV1939(video);'),'remote track attachment attempts playback');
+must(home.includes('estudexUnlockRoomAudioFromGestureV1939();\n});'),'gesture retry must run in bubbling phase after target selection');
 must(!home.includes('video.play().catch(() => {});'),'silent autoplay rejection remains');
 
 // Files outside the isolated media surfaces must remain byte-identical to the H34 baseline.
