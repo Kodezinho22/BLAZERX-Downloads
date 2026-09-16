@@ -1,0 +1,98 @@
+name: Test ESTUDEX v1.9.39 Media Privacy Candidate
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - work/v1.9.39-media-privacy-audio-playback
+    paths:
+      - '.github/workflows/test-estudex-v1.9.39-media-privacy-candidate.yml'
+      - 'hotfixes/v1.9.39-media-privacy-candidate/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build-candidate:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      BASE_TAG: v1.9.38-hotfix34
+      BASE_SETUP_SHA256: fbe18ef24821c32877cb723bf6e9988ee6ebf01aad82714f8980ccdeee519d42
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download published Hotfix34 baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release download $env:BASE_TAG --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          $hash=(Get-FileHash ESTUDEX-Setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($hash -ne $env:BASE_SETUP_SHA256){throw "Hotfix34 baseline SHA mismatch: $hash"}
+
+      - name: Recover Hotfix34 application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path setup,nupkg,app | Out-Null
+          & 7z x ESTUDEX-Setup.exe '-osetup' -y | Out-Null
+          $pkg=Get-ChildItem setup -Recurse -Filter 'blazerx-1.9.38-full.nupkg' | Select-Object -First 1
+          if(-not $pkg){throw 'Hotfix34 nupkg missing'}
+          & 7z x $pkg.FullName '-onupkg' -y | Out-Null
+          $asar=Get-ChildItem nupkg -Recurse -Filter app.asar | Select-Object -First 1
+          if(-not $asar){throw 'Hotfix34 app.asar missing'}
+          npx --yes @electron/asar extract $asar.FullName app
+          node hotfixes/v1.9.38-hotfix34/contract.cjs app
+
+      - name: Apply isolated media privacy fix
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          node hotfixes/v1.9.39-media-privacy-candidate/patch.cjs app
+          node --check app/public/estudex-engine.js
+          node --check app/public/js/home.js
+          node --check app/public/js/estudex-engine-socket-compat.js
+          node hotfixes/v1.9.39-media-privacy-candidate/contract.cjs app
+
+      - name: Install dependencies
+        shell: pwsh
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Build technical revision 1.9.39 candidate
+        shell: pwsh
+        working-directory: app
+        run: npx electron-forge make --platform=win32 --arch=x64
+
+      - name: Verify packaged candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path dist,verify-nupkg,verify-app | Out-Null
+          $setup=Get-ChildItem app/out/make -Recurse -Filter 'ESTUDEX-Setup.exe' | Select-Object -First 1
+          $pkg=Get-ChildItem app/out/make -Recurse -Filter 'blazerx-1.9.39-full.nupkg' | Select-Object -First 1
+          if(-not $setup -or -not $pkg){throw 'Media privacy candidate outputs missing'}
+          Copy-Item $setup.FullName dist/ESTUDEX-v1.9.39-Media-Privacy-Candidate-Setup.exe -Force
+          Copy-Item $pkg.FullName dist/blazerx-1.9.39-full.nupkg -Force
+          & 7z x $pkg.FullName '-overify-nupkg' -y | Out-Null
+          $asar=Get-ChildItem verify-nupkg -Recurse -Filter app.asar | Select-Object -First 1
+          if(-not $asar){throw 'Candidate app.asar missing'}
+          npx --yes @electron/asar extract $asar.FullName verify-app
+          node hotfixes/v1.9.39-media-privacy-candidate/contract.cjs verify-app
+          $hash=(Get-FileHash dist/ESTUDEX-v1.9.39-Media-Privacy-Candidate-Setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "SETUP_SHA256=$hash" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Media privacy candidate SHA-256: $hash"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESTUDEX-v1.9.39-Media-Privacy-Candidate
+          path: |
+            dist/ESTUDEX-v1.9.39-Media-Privacy-Candidate-Setup.exe
+            dist/blazerx-1.9.39-full.nupkg
+          retention-days: 14
