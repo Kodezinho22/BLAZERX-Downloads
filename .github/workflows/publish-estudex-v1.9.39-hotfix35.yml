@@ -1,0 +1,155 @@
+name: Publish ESTUDEX v1.9.3 Hotfix 35 Media Privacy
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/publish-estudex-v1.9.39-hotfix35.yml'
+      - 'hotfixes/v1.9.39-hotfix35/**'
+
+permissions:
+  contents: write
+
+jobs:
+  build-publish:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      BASE_TAG: v1.9.38-hotfix34
+      RELEASE_TAG: v1.9.39-hotfix35
+      BASE_SETUP_SHA256: fbe18ef24821c32877cb723bf6e9988ee6ebf01aad82714f8980ccdeee519d42
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Ensure release tag is new
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release view $env:RELEASE_TAG --repo Kodezinho22/BLAZERX-Downloads *> $null
+          if($LASTEXITCODE -eq 0){throw "Release $env:RELEASE_TAG already exists"}
+          exit 0
+
+      - name: Download Hotfix34 baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release download $env:BASE_TAG --repo Kodezinho22/BLAZERX-Downloads --pattern 'ESTUDEX-Setup.exe'
+          $hash=(Get-FileHash ESTUDEX-Setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($hash -ne $env:BASE_SETUP_SHA256){throw "Hotfix34 baseline SHA mismatch: $hash"}
+
+      - name: Recover Hotfix34 application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path setup,nupkg,app | Out-Null
+          & 7z x ESTUDEX-Setup.exe '-osetup' -y | Out-Null
+          $pkg=Get-ChildItem setup -Recurse -Filter 'blazerx-1.9.38-full.nupkg' | Select-Object -First 1
+          if(-not $pkg){throw 'Hotfix34 nupkg missing'}
+          & 7z x $pkg.FullName '-onupkg' -y | Out-Null
+          $asar=Get-ChildItem nupkg -Recurse -Filter app.asar | Select-Object -First 1
+          if(-not $asar){throw 'Hotfix34 app.asar missing'}
+          npx --yes @electron/asar extract $asar.FullName app
+          node hotfixes/v1.9.38-hotfix34/contract.cjs app
+
+      - name: Apply validated media privacy fix
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          node hotfixes/v1.9.39-media-privacy-candidate/patch.cjs app
+          node hotfixes/v1.9.39-media-privacy-candidate/monitor-explicit-audio.cjs app
+          node hotfixes/v1.9.39-media-privacy-candidate/playback-gesture-order.cjs app
+          node --check app/public/estudex-engine.js
+          node --check app/public/js/home.js
+          node --check app/public/js/estudex-engine-socket-compat.js
+          node hotfixes/v1.9.39-media-privacy-candidate/contract.cjs app
+
+      - name: Finalize Hotfix35 release state
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          node hotfixes/v1.9.39-hotfix35/finalize-release.cjs app
+          node hotfixes/v1.9.39-hotfix35/contract.cjs app
+
+      - name: Install dependencies
+        shell: pwsh
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Build technical revision 1.9.39
+        shell: pwsh
+        working-directory: app
+        run: npx electron-forge make --platform=win32 --arch=x64
+
+      - name: Verify packaged Hotfix35
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path dist,verify-nupkg,verify-app | Out-Null
+          $setup=Get-ChildItem app/out/make -Recurse -Filter 'ESTUDEX-Setup.exe' | Select-Object -First 1
+          $pkg=Get-ChildItem app/out/make -Recurse -Filter 'blazerx-1.9.39-full.nupkg' | Select-Object -First 1
+          if(-not $setup -or -not $pkg){throw 'Hotfix35 build outputs missing'}
+          Copy-Item $setup.FullName dist/ESTUDEX-Setup.exe -Force
+          Copy-Item $setup.FullName dist/BLAZERX-Setup.exe -Force
+          Copy-Item $pkg.FullName dist/blazerx-1.9.39-full.nupkg -Force
+          & 7z x $pkg.FullName '-overify-nupkg' -y | Out-Null
+          $asar=Get-ChildItem verify-nupkg -Recurse -Filter app.asar | Select-Object -First 1
+          if(-not $asar){throw 'Hotfix35 packaged app.asar missing'}
+          npx --yes @electron/asar extract $asar.FullName verify-app
+          node hotfixes/v1.9.39-hotfix35/contract.cjs verify-app
+          $hash=(Get-FileHash dist/ESTUDEX-Setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "SETUP_SHA256=$hash" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Hotfix35 SHA-256: $hash"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESTUDEX-v1.9.39-Hotfix35-Media-Privacy
+          path: |
+            dist/ESTUDEX-Setup.exe
+            dist/BLAZERX-Setup.exe
+            dist/blazerx-1.9.39-full.nupkg
+          retention-days: 14
+
+      - name: Publish Hotfix35
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          @"
+          ESTUDEX v1.9.3 — Hotfix 35 Media Privacy + Remote Audio
+
+          Revisão técnica 1.9.39, construída sobre o Hotfix 34 publicado.
+
+          Correções:
+          - compartilhamento de janela é fail-closed para áudio: tracks de áudio são descartadas e finalizadas quando isolamento por janela não pode ser garantido;
+          - removido o fallback automático que convertia falta de áudio da captura em loopback global do Windows;
+          - áudio de aba/guia mantém somente a track fornecida pela captura da guia selecionada;
+          - áudio global de monitor exige autorização explícita por compartilhamento e o fallback de loopback só pode ocorrer para monitor após esse opt-in;
+          - compartilhamento de tela não solicita microfone;
+          - reprodução de áudio remoto trata bloqueios de autoplay e tenta play() novamente a partir do gesto explícito de abrir/assistir a transmissão;
+          - toast temporário informa quando uma janela continua sem áudio por privacidade;
+          - Hotfix 34 de input lag/renderização, Hotfix 33 de sala única e delays de reconnect do Hotfix 32 permanecem preservados.
+
+          Produto: ESTUDEX v1.9.3
+          Revisão técnica: 1.9.39
+          Hotfix: 35
+          Base: v1.9.38-hotfix34
+          SHA-256: $env:SETUP_SHA256
+          "@ | Set-Content release-notes.md -Encoding utf8
+          gh release create $env:RELEASE_TAG `
+            dist/ESTUDEX-Setup.exe `
+            dist/BLAZERX-Setup.exe `
+            --repo Kodezinho22/BLAZERX-Downloads `
+            --target $env:GITHUB_SHA `
+            --title 'ESTUDEX v1.9.3 — Hotfix 35 Media Privacy + Remote Audio' `
+            --notes-file release-notes.md
