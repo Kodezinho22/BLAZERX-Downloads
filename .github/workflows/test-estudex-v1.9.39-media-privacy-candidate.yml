@@ -55,6 +55,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           node hotfixes/v1.9.39-media-privacy-candidate/patch.cjs app
+          node hotfixes/v1.9.39-media-privacy-candidate/monitor-explicit-audio.cjs app
           node --check app/public/estudex-engine.js
           node --check app/public/js/home.js
           node --check app/public/js/estudex-engine-socket-compat.js
