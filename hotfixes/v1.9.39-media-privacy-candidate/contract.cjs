@@ -10,6 +10,7 @@ must(pkg.version==='1.9.39','technical version');
 const manifest=JSON.parse(read('estudex-media-privacy-v1939-manifest.json'));
 must(manifest.release===false,'candidate must not be a release');
 must(manifest.baseTag==='v1.9.38-hotfix34','must remain based on Hotfix34');
+must(manifest.privacy?.monitorFallback==='explicit-monitor-only','monitor fallback policy');
 
 const home=read('public/js/home.js');
 const engine=read('public/estudex-engine.js');
@@ -41,14 +42,16 @@ must(toggleMatch,'toggleRoomScreen function');
 must(!toggleMatch[0].includes('getUserMedia'),'screen share must not request microphone/user media');
 must(toggleMatch[0].includes('getDisplayMedia'),'screen share must use display capture');
 
-// Engine must no longer upgrade missing window/tab audio into global desktop loopback.
+// Engine must never upgrade missing tab/window audio into global desktop loopback.
 must(engine.includes('ESTUDEX_V193_MEDIA_PRIVACY_FAIL_CLOSED'),'engine fail-closed marker');
-must(!engine.includes("if (constraints?.audio && !(stream?.getAudioTracks?.().length))"),'automatic global audio fallback remains');
+must(engine.includes('ESTUDEX_V193_MEDIA_PRIVACY_MONITOR_FALLBACK_EXPLICIT'),'explicit monitor fallback marker');
+must(!engine.includes("if (constraints?.audio && !(stream?.getAudioTracks?.().length))"),'old automatic global audio fallback remains');
+must(engine.includes("displaySurface === 'monitor' && allowMonitorSystemAudio && constraints?.audio"),'monitor fallback lacks explicit gate');
 must(engine.includes("displaySurface === 'browser' || (displaySurface === 'monitor' && allowMonitorSystemAudio)"),'engine post-capture allowlist');
 must(engine.includes("mediaState.screenSourceKind==='screen'&&sourceMeta?.allowSystemAudio===true"),'legacy room monitor audio is not explicit');
 must(engine.includes("sourceKind==='screen'&&sourceMeta?.allowSystemAudio===true"),'legacy call monitor audio is not explicit');
 const attachCalls=(engine.match(/await estudexAttachSystemAudioV1925\(/g)||[]).length;
-must(attachCalls===2,'system loopback helper must only remain behind the two explicit monitor gates');
+must(attachCalls===3,'system loopback helper must exist only behind three explicit monitor gates');
 
 // Remote playback must react to user gestures and handle autoplay rejection.
 must(home.includes('ESTUDEX_V193_REMOTE_AUDIO_GESTURE_UNLOCK'),'remote audio unlock marker');
